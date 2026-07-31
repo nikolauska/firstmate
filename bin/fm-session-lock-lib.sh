@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-session-lock-lib.sh, then call its fm_session_lock_* and fm_harness_* functions.
 # Shared session-lock harness identity.
 #
 # ONE owner of the "which verified-harness process holds this home's session
@@ -10,6 +11,9 @@
 
 # Known harness command names; extend when a new adapter is verified.
 FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$'
+FM_SESSION_LOCK_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$FM_SESSION_LOCK_LIB_DIR/fm-omp-process-lib.sh"
 
 # Walk the current process ancestry (up to 16 hops) and print a harness pid.
 # For every harness except Claude, the first match wins (innermost pid), which
@@ -33,7 +37,9 @@ fm_harness_ancestry_pid() {
     args=$(ps -o args= -p "$pid" 2>/dev/null)
     bc=$(basename -- "$comm")
     hit=0; is_claude=0
-    if printf '%s' "$bc" | grep -qE "$FM_HARNESS_RE"; then
+    if fm_omp_process_matches "$comm" "$args" "$pid"; then
+      hit=1
+    elif printf '%s' "$bc" | grep -qE "$FM_HARNESS_RE"; then
       hit=1
       case "$bc" in *claude*) is_claude=1 ;; esac
     else
@@ -69,12 +75,15 @@ fm_harness_pid_alive() {
   local pid=$1 comm args
   kill -0 "$pid" 2>/dev/null || return 1
   comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+  args=$(ps -o args= -p "$pid" 2>/dev/null)
+  if fm_omp_process_matches "$(basename -- "$comm")" "$args" "$pid"; then
+    return 0
+  fi
   if printf '%s' "$(basename -- "$comm")" | grep -qE "$FM_HARNESS_RE"; then
     return 0
   fi
   case "$comm" in
     *node*|*python*)
-      args=$(ps -o args= -p "$pid" 2>/dev/null)
       printf '%s' "$args" | grep -qE "$FM_HARNESS_RE"
       ;;
     *) return 1 ;;

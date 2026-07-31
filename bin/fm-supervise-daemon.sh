@@ -81,6 +81,11 @@
 #                                   supported as supervisor backends; the daemon
 #                                   refuses loudly at startup rather than trying
 #                                   tmux primitives against a non-tmux pane.
+#          FM_SUPERVISOR_HARNESS    exact supervisor harness identity. The
+#                                   detached launcher passes this explicitly;
+#                                   otherwise startup derives it with
+#                                   bin/fm-harness.sh. Herdr injection refuses
+#                                   when the identity is unknown.
 #          FM_INJECT_SKIP           |-prefixes force-self-handle bypassing
 #                                   classification (default "heartbeat"); empty
 #                                   disables. Use sparingly: it overrides the
@@ -597,7 +602,7 @@ pane_is_busy() {  # <target> [backend]
 # directly and applies the same positive-proof boundary.
 pane_input_pending() {  # <target> [backend]
   local target=$1 backend=${2:-tmux}
-  [ "$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)" != empty ]
+  [ "$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "${FM_SUPERVISOR_OMP_BUN:-}" 2>/dev/null)" != empty ]
 }
 
 task_window_backend() {  # <window> <state>
@@ -1112,7 +1117,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded
+  local msg=$1 state target backend harness retries sleep_s verdict composer encoded
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the normal always-on
@@ -1147,7 +1152,7 @@ inject_msg() {  # <message> [state]
   #      target - typing the escalation into a shell could execute it - so defer
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
-  composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
+  composer=$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "${FM_SUPERVISOR_OMP_BUN:-}" 2>/dev/null)
   if [ "$composer" != empty ]; then
     log "inject deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     return 1
@@ -1159,9 +1164,20 @@ inject_msg() {  # <message> [state]
   # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh): for
   # backend=tmux this calls fm_backend_tmux_send_text_submit, a verbatim
   # re-export of fm_tmux_submit_core - byte-identical to calling it directly.
+  harness=${FM_SUPERVISOR_HARNESS:-}
+  case "$harness" in
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi) ;;
+    *)
+      if [ "$backend" = herdr ]; then
+        log "inject deferred: herdr supervisor harness is not a verified exact identity (harness=${harness:-unknown})"
+        return 1
+      fi
+      harness=
+      ;;
+  esac
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
-  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
+  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness" "${FM_SUPERVISOR_OMP_BUN:-}")
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
   fi
@@ -1340,7 +1356,7 @@ fm_super_main() {
   # into FM_SUPERVISOR_BACKEND makes inject_msg/pane_is_busy/pane_input_pending
   # (which read that env var) dispatch through the right backend without an
   # extra global thread-through.
-  local discovered_backend backend_source
+  local discovered_backend backend_source discovered_harness omp_primary_comm omp_primary_args
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
     if [ -n "${TMUX_PANE:-}" ]; then
@@ -1367,6 +1383,22 @@ fm_super_main() {
     rm -f "$PIDFILE" 2>/dev/null || true
     exit 1
   fi
+  discovered_harness=${FM_SUPERVISOR_HARNESS:-}
+  [ -n "$discovered_harness" ] || discovered_harness=$("$FM_DAEMON_DIR/fm-harness.sh")
+  FM_SUPERVISOR_HARNESS=$discovered_harness
+  export FM_SUPERVISOR_HARNESS
+  FM_SUPERVISOR_OMP_BUN=
+  if [ "$FM_SUPERVISOR_HARNESS" = omp ] \
+     && fm_omp_primary_marker_read "$STATE/.omp-primary-extension-loaded"; then
+    omp_primary_comm=$(ps -o comm= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    omp_primary_args=$(ps -o args= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    if FM_OMP_PROCESS_EXPECTED_BUN=$FM_OMP_MARKER_BUN \
+       FM_OMP_PROCESS_EXPECTED_BIN=$FM_OMP_MARKER_BIN \
+       fm_omp_process_matches "$omp_primary_comm" "$omp_primary_args" "$FM_OMP_MARKER_PID"; then
+      FM_SUPERVISOR_OMP_BUN=$FM_OMP_MARKER_BUN
+    fi
+  fi
+  export FM_SUPERVISOR_OMP_BUN
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----
   # Priority: FM_SUPERVISOR_TARGET override > $TMUX_PANE (tmux; inherited from

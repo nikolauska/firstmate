@@ -47,6 +47,10 @@ Verify setup by spawning a small task and confirming its `fm-<id>` window appear
 A target-existence check proves only that the pane exists.
 The deeper tmux agent-liveness probe first verifies exact window membership, then reads `#{pane_current_command}` to distinguish a running harness process from a bare idle shell.
 It classifies recognized Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Kimi process names as `alive`, common shells as `dead`, an authoritatively absent window as `missing`, unreadable state as `unreadable`, and every other process as `ambiguous`.
+OMP is the interpreter exception: recovery first validates its task-bound metadata, then accepts either a script-backed process whose foreground executable equals the canonical Bun realpath and whose entrypoint argv token equals the canonical OMP path, or a compiled OMP process whose foreground executable equals the canonical OMP path and whose first argv token names that binary.
+A bare Bun argv token is accepted only when its basename agrees and the independent PID executable check proves the recorded Bun binary; a bare OMP token and `comm=omp` are accepted only with the same PID executable proof, and a fresh `PATH` lookup is never identity evidence.
+The canonical `omp_bun` and `omp_bin` identities must be absolute, executable, and whitespace-free because the portable process reader exposes one flattened argument string; spawn refuses unsupported paths before endpoint publication, launches the canonical Bun/OMP pair or compiled OMP binary directly, and records the same identities in task metadata.
+The primary adapter refuses unsupported paths before marker publication and replaces its marker atomically so a pre-existing symlink is never followed to its target.
 Only `dead` and `missing` authorize recovery because a false dead result could launch a duplicate agent.
 
 The verified Pi Launcher path reports the exact foreground command `pi-launcher` for both pi and pi-signed, while direct executable identities `pi`, `pi-signed`, and `Pi` remain accepted exactly.
@@ -54,6 +58,8 @@ Similar or prefixed process names are not accepted through those exact Pi-family
 
 Agent liveness and composer safety are separate checks.
 For a bordered composer, the tmux reader locates the complete box structurally and classifies every content row through the shared ANSI and ghost handling in `bin/fm-composer-lib.sh`.
+OMP's independent two-row composer additionally requires exact top/bottom terminal-cell width equality, measured with the canonical `omp_bun` from validated task metadata through the dispatcher and every submit retry; the active primary uses the equivalently validated Bun identity in its four-line marker.
+A fresh `PATH` lookup, a missing binding, a non-executable path, or a runtime/process mismatch cannot authorize geometry and yields `unknown`.
 Real text on any content row is pending, while only an unambiguous box with every row empty is proven empty.
 Unreadable, incomplete, or structurally ambiguous boxes fail closed, and panes without a bordered composer retain the compatible cursor-row classification.
 The shared classifier accepts a shell glyph as an empty agent composer only inside a verified bordered composer.
