@@ -107,6 +107,35 @@ test_retire_serializes_and_rejects_stale_gen() {
   pass "retire waits for the writer lock and cannot remove a new incarnation"
 }
 
+test_linux_lock_mtime_avoids_bsd_stat_fallback() {
+  local d fakebin state gen
+  d="$TMP_ROOT/linux-stat"
+  fakebin=$(fm_fakebin "$d")
+  cat > "$fakebin/uname" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' Linux
+SH
+  cat > "$fakebin/stat" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "-c %Y") printf '0\n' ;;
+  "-f %m") printf 'File: fake BSD stat failure\n'; exit 1 ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$fakebin/uname" "$fakebin/stat"
+  state=$(new_state_dir linux-stat)
+  gen=$("$EV" arm "$state" t1)
+  mkdir "$state/t1.busy-state.lock"
+  PATH="$fakebin:$PATH" FM_BUSY_LOCK_STALE_SECS=0 "$EV" apply "$state" t1 idle \
+    --gen "$gen" --source claude-hook --event stop >/dev/null 2>&1 \
+    || fail "Linux lock cleanup should not parse BSD stat output"
+  [ ! -e "$state/t1.busy-state.lock" ] || fail "stale lock was not removed"
+  [ "$(fm_busy_classify tmux w1 claude t1 "$state")" = "idle claude-hook" ] \
+    || fail "apply did not complete after stale lock cleanup"
+  pass "Linux busy-state lock aging selects GNU stat without BSD fallback output"
+}
+
 test_retire_missing_sidecar_is_idempotent() {
   local state gen
   state=$(new_state_dir retire-missing)
@@ -361,6 +390,7 @@ test_apply_advances_seq_and_source
 test_apply_current_gen_reset
 test_apply_unarmed_refused
 test_retire_serializes_and_rejects_stale_gen
+test_linux_lock_mtime_avoids_bsd_stat_fallback
 test_retire_missing_sidecar_is_idempotent
 test_stale_gen_event_rejected
 test_stale_gen_record_unknown

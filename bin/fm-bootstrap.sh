@@ -494,14 +494,45 @@ secondmate_liveness_sweep() {
   return 0
 }
 
+platform_install_cmd() {
+  local tool=$1 package=$1
+  case "$tool" in
+    node) package=nodejs ;;
+    gh) package=github-cli ;;
+  esac
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) printf 'brew install %s' "$package" ;;
+    Linux)
+      if command -v pacman >/dev/null 2>&1; then
+        printf 'sudo pacman -S --needed %s' "$package"
+      elif command -v apt-get >/dev/null 2>&1; then
+        printf 'sudo apt-get install %s' "$package"
+      else
+        printf 'install %s with your platform'\''s package manager' "$package"
+      fi
+      ;;
+    *) printf 'install %s with your platform'\''s package manager' "$package" ;;
+  esac
+}
+
+# Keep HOME and PATH literal so the copied command expands them in the operator's shell.
+# shellcheck disable=SC2016
+npm_install_cmd() {
+  case "$(uname -s 2>/dev/null)" in
+    Linux) printf 'npm install --prefix "$HOME/.local" -g %s && export PATH="$HOME/.local/bin:$PATH"' "$1" ;;
+    *) printf 'npm install -g %s' "$1" ;;
+  esac
+}
+
 install_cmd() {
   case "$1" in
-    tmux|node|git|gh|curl|jq|orca|zellij) echo "brew install $1  # or the platform's package manager" ;;
-    cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
+    tmux|node|git|gh|curl|jq|zellij) platform_install_cmd "$1" ;;
+    orca) [ "$(uname -s 2>/dev/null)" = Darwin ] && echo "brew install orca" || echo "see docs/orca-backend.md (macOS only)" ;;
+    cmux) echo "see https://cmux.com (macOS only)" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
-    tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    gh-axi|chrome-devtools-axi|lavish-axi) printf '%s && %s setup hooks\n' "$(npm_install_cmd "$1")" "$1" ;;
+    tasks-axi|quota-axi) npm_install_cmd "$1" ;;
     *) return 1 ;;
   esac
 }

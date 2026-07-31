@@ -102,7 +102,12 @@ lock_acquire() {
     tries=$((tries + 1))
     if [ "$tries" -ge 40 ]; then
       now=$(date +%s)
-      mtime=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "$now")
+      # GNU stat -f prints filesystem data before failing; select its format by platform.
+      if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+        mtime=$(stat -f %m "$LOCK" 2>/dev/null || echo "$now")
+      else
+        mtime=$(stat -c %Y "$LOCK" 2>/dev/null || echo "$now")
+      fi
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
         rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true

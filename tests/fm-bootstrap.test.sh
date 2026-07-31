@@ -21,6 +21,36 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+
+# Keep HOME and PATH literal so the expected command matches the copied operator command.
+# shellcheck disable=SC2016
+expected_npm_install() {
+  case "$(uname -s)" in
+    Linux) printf 'npm install --prefix "$HOME/.local" -g %s && export PATH="$HOME/.local/bin:$PATH"' "$1" ;;
+    *) printf 'npm install -g %s' "$1" ;;
+  esac
+}
+
+expected_system_install() {
+  local tool=$1 package=$1
+  case "$tool" in
+    node) package=nodejs ;;
+    gh) package=github-cli ;;
+  esac
+  case "$(uname -s)" in
+    Darwin) printf 'brew install %s' "$package" ;;
+    Linux)
+      if PATH="$BASE_PATH" command -v pacman >/dev/null 2>&1; then
+        printf 'sudo pacman -S --needed %s' "$package"
+      elif PATH="$BASE_PATH" command -v apt-get >/dev/null 2>&1; then
+        printf 'sudo apt-get install %s' "$package"
+      else
+        printf 'install %s with your platform'\''s package manager' "$package"
+      fi
+      ;;
+    *) printf 'install %s with your platform'\''s package manager' "$package" ;;
+  esac
+}
 TMP_ROOT=$(fm_test_tmproot fm-bootstrap-tests)
 export FM_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
 
@@ -230,6 +260,9 @@ assert_timeout_report() {
 #   mode=grep  -> output must contain <expect> (fixed string); <notcontains> must not appear
 test_bootstrap_reporting() {
   local label lease tasks quota backend mode expect notcontains case_dir fakebin out n archive_body multi_id
+  local npm_tasks_install npm_quota_install
+  npm_tasks_install=$(expected_npm_install tasks-axi)
+  npm_quota_install=$(expected_npm_install quota-axi)
   n=0
   while IFS='^' read -r label lease tasks quota backend mode expect notcontains; do
     [ -n "$label" ] || continue
@@ -280,16 +313,16 @@ test_bootstrap_reporting() {
         fi
         ;;
     esac
-  done <<'ROWS'
+  done <<ROWS
 treehouse --lease support is accepted silently^1^0.1.1^1^manual^empty^^
 treehouse without --lease reports an upgrade, gh auth is fine^0^0.1.1^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
 compatible tasks-axi is silent by default^1^0.1.1^1^-^empty^^
-missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-tasks-axi without archive-body is required by default^1^0.1.2:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-tasks-axi without multi-id mv is required by default^1^0.2.2:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.1.1^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
-manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
+missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (install: $npm_tasks_install)^
+incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: $npm_tasks_install)^
+tasks-axi without archive-body is required by default^1^0.1.2:noarchive^1^-^exact^MISSING: tasks-axi (install: $npm_tasks_install)^
+tasks-axi without multi-id mv is required by default^1^0.2.2:nomulti^1^-^exact^MISSING: tasks-axi (install: $npm_tasks_install)^
+missing quota-axi is required by default^1^0.1.1^0^manual^exact^MISSING: quota-axi (install: $npm_quota_install)^
+manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: $npm_tasks_install)^
 manual backlog backend suppresses tasks-axi availability^1^0.1.1^1^manual^empty^^
 ROWS
   pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
@@ -333,7 +366,9 @@ ROWS
 # stale install used to pass this check silently, so the fix stayed uninstalled.
 test_quota_axi_min_version() {
   local label version mode case_dir fakebin out missing n
-  missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+  local npm_quota_install
+  npm_quota_install=$(expected_npm_install quota-axi)
+  missing="MISSING: quota-axi (install: $npm_quota_install)"
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -365,6 +400,11 @@ ROWS
 
 test_git_is_required_with_supported_install_instruction() {
   local case_dir fakebin bash_env out expected
+  case "$(uname -s)" in
+    Darwin) expected="MISSING: git (install: brew install git)" ;;
+    Linux) expected="MISSING: git (install: $(expected_system_install git))" ;;
+    *) expected="MISSING: git (install: $(expected_system_install git))" ;;
+  esac
   case_dir="$TMP_ROOT/git-required"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
@@ -384,14 +424,17 @@ SH
 
   out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$bash_env" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  expected="MISSING: git (install: brew install git  # or the platform's package manager)"
   [ "$out" = "$expected" ] || fail "missing git should report the supported install instruction, got: $out"
   pass "bootstrap requires git with an install instruction"
 }
 
 test_orca_backend_gates_orca_tool_only_when_selected() {
   local case_dir fakebin out missing_orca no_orca_env
-  missing_orca="MISSING: orca (install: brew install orca  # or the platform's package manager)"
+  if [ "$(uname -s)" = Darwin ]; then
+    missing_orca='MISSING: orca (install: brew install orca)'
+  else
+    missing_orca='MISSING: orca (install: see docs/orca-backend.md (macOS only))'
+  fi
 
   case_dir="$TMP_ROOT/orca-backend-selected"
   mkdir -p "$case_dir/home/config"
@@ -461,7 +504,7 @@ ROWS
 }
 
 test_session_provider_backends_gate_own_cli_not_tmux() {
-  local backend cli case_dir fakebin out missing
+  local backend cli case_dir fakebin out missing no_cli_env
   # With the backend's OWN session CLI absent (and tmux also absent), bootstrap
   # must fail closed on the genuine dep and never substitute a false tmux demand.
   while IFS='^' read -r backend cli; do
@@ -472,7 +515,17 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    no_cli_env="$case_dir/no-cli.bash"
+    cat > "$no_cli_env" <<SH
+command() {
+  if [ "\${1:-}" = -v ] && [ "\${2:-}" = "$cli" ]; then
+    return 1
+  fi
+  builtin command "\$@"
+}
+SH
+    out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$no_cli_env" \
+      FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     if [ "$backend" = herdr ]; then
       missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)"
