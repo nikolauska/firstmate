@@ -1,22 +1,23 @@
 # Calm-mode harness feasibility
 
-This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, and supported-API boundaries for Firstmate calm mode.
+This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, OMP presentation boundary, and supported-API limits for Firstmate Calm mode.
 [`calm.md`](calm.md) owns the current user-facing `/calm` usage and limitation contract.
 
 ## Required extension surface
 
-A qualifying implementation must auto-load from the trusted project, persist the toggle choice for the effective Firstmate home across Pi session starts and resumes, keep working activity visible, emit no Calm status row, redraw already-rendered controllable rows, remove supported hidden rows without gaps, restore ordinary rendering, and leave delivery, tool execution, model context, session storage, export and share operation, diagnostics, and expansion state unchanged.
-The governing presentation policy allows genuine original user prompts, genuine user-facing assistant text, and working activity.
-Working activity may be presented through Pi's stock row or through a supported Calm-owned widget, but Calm must leave the stock row untouched whenever Calm is off.
+A qualifying implementation persists the toggle for the effective Firstmate home, changes presentation only, keeps working activity visible, redraws controllable presentation state, restores ordinary rendering, and leaves delivery, tool execution, model context, session storage, export and share operation, diagnostics, and expansion state unchanged.
+Pi meets that contract through its supported working widget and API-probed exported-class seams described below.
+OMP meets the supported subset through its public tool-expansion and working-message UI methods; it does not claim transcript-row hiding where OMP exposes no equivalent renderer.
 Changing persisted context to remove hidden content, filtering provider context, patching installed harness code, or claiming coverage outside a supported renderer does not satisfy that boundary.
 
 ## Compatibility evidence
 
-[`calm.md`](calm.md#pi-compatibility) owns the current Pi compatibility contract.
+[`calm.md`](calm.md#compatibility-and-ownership) owns the current Pi and OMP compatibility contract.
 Pi 0.81.1 was installed when Calm was first built, and Pi 0.82.0 was the later reverification target.
 The inspected Pi CHANGELOG shows no relevant presentation API introduced at either version, so those versions remain verification evidence rather than compatibility bounds.
-The exported classes used by the adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
-`tests/fm-calm-pi-extension.test.sh` records the installed Pi version as evidence without gating on it and covers both newer synthetic versions and an unavailable adapter seam.
+The exported classes used by the Pi adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
+OMP 17.2.1 is the installed verification target for the public `ExtensionContext.ui.getToolsExpanded()`, `setToolsExpanded()`, and `setWorkingMessage()` seams.
+`tests/fm-calm-pi-extension.test.sh` and `tests/fm-calm-omp-extension.test.sh` record executable behavior without rejecting a newer runtime solely for its version.
 
 ## Pi 0.81.1 end-to-end reproduction
 
@@ -67,7 +68,7 @@ PR 927 made Calm persistent and described controlled rows as gapless while retai
 PR 936 removed the unsafe operational-input reroute and preserved legacy zero-height entries but did not change assistant-message layout.
 
 The fix installs one idempotent presentation adapter, verified on Pi 0.81.1 through 0.82.0, on the exported `AssistantMessageComponent.updateContent` method.
-The adapter probes for that exact method and, per the [compatibility contract](calm.md#pi-compatibility), degrades independently with a diagnostic rather than gating on a version number.
+The adapter probes for that exact method and, per the [compatibility contract](calm.md#compatibility-and-ownership), degrades independently with a diagnostic rather than gating on a version number.
 Only while Calm is active and Pi has collapsed thinking does the adapter pass a shallow thinking-free presentation copy into Pi's ordinary layout calculation, then retain the original message on the component for invalidation and thinking expansion.
 The persisted assistant message, provider context, tool execution, export data, and expansion history remain unchanged.
 Collapsed thinking-only assistant messages now render zero rows, thinking before visible assistant text adds no spacing beyond the text-only baseline, and expanding thinking still renders the original reasoning.
@@ -125,7 +126,7 @@ The leading cause would have been falsified if the row or height remained, the p
 None occurred.
 
 The fix installs a separate idempotent presentation adapter, verified on Pi 0.81.1 through 0.82.0, on the exported `InteractiveMode.addMessageToChat` method.
-The adapter probes for that exact method and, per the [compatibility contract](calm.md#pi-compatibility), degrades independently with a diagnostic rather than gating on a version number.
+The adapter probes for that exact method and, per the [compatibility contract](calm.md#compatibility-and-ownership), degrades independently with a diagnostic rather than gating on a version number.
 It delegates current recognition to `bin/fm-operational-input.sh`, adds only the evidence-backed bare-U+2063 `Supervisor escalate (` presentation compatibility shape, mounts a `UserMessageComponent` subclass that preserves Pi's stock row plus leading spacer while Calm is off, and returns zero rendered lines while Calm is on.
 It never intercepts the input event, rewrites the message, changes its role, filters model context, or changes session data.
 Messages containing an image are left on Pi's ordinary path even when their text equals an operational envelope because Firstmate's authoritative producers are text-only.
@@ -164,13 +165,13 @@ The presentation is TUI-only and visual-only.
 It adds no session entry, transcript row, model context, or export or share content, and its widget takes no keyboard input, so editor focus and Escape abort are unchanged.
 Compaction and retry loaders remain stock because Pi exposes no supported replacement for them.
 
-## Central visibility and input policy
+## Central Pi visibility and input policy
 
-`.pi/extensions/lib/fm-calm-visibility.ts` owns only the allowlist-style transcript presentation policy.
+`.pi/extensions/lib/fm-calm-visibility.ts` owns only the allowlist-style Pi transcript presentation policy.
 `bin/fm-operational-input.sh` owns current cross-language operational-input construction and parsing, while the thin Pi adapter lives at `.pi/extensions/lib/fm-operational-input.ts`.
 Only `genuine-user-prompt`, `genuine-agent-response`, and `working-status` are policy-visible.
 Every other audited class is policy-hidden when Pi exposes a supported presentation boundary, but semantic input is never transformed to enforce that preference.
-The home-local persistence schema is owned by [`docs/configuration.md`](configuration.md#pi-calm-preference-configcalm).
+The home-local persistence schema is owned by [`docs/configuration.md`](configuration.md#calm-preference-configcalm).
 
 Current session-start, watcher, turn-end guard, away supervisor, and launch-brief inputs retain their versioned U+2063 static envelopes.
 The established leading `[fm-from-firstmate]` plus U+2063 routing carrier remains current so running secondmate charters remain compatible.
@@ -182,6 +183,15 @@ Legacy Calm custom entries and messages remain in existing session artifacts, an
 Cycling tool expansion and restoring its original value rebuilds controllable rows and leaves final `Ctrl+O` state unchanged.
 Exported and shared HTML retain genuine user prompts, genuine assistant responses, current operational user messages, ordinary tool rendering, and the complete session artifact.
 Serialized session data and Pi 0.81.1's sidebar tree also retain legacy hidden operational custom messages.
+
+## OMP supported presentation boundary
+
+`.omp/extensions/fm-calm.ts` owns the OMP-native preference and the supported UI presentation.
+OMP's public `ExtensionContext.ui.getToolsExpanded()` and `setToolsExpanded()` methods provide the tool-output expansion boundary.
+OMP's public `ExtensionContext.ui.setWorkingMessage()` method provides the active-run working-message boundary.
+The extension saves and restores the user's expansion choice, keeps the shorter working message through `agent_end` events that will continue, and restores the stock working message on a terminal `agent_end`.
+OMP exposes no supported transcript-wide filter, ordinary-user renderer, assistant renderer, or built-in-tool renderer in the installed 17.2.1 extension surface.
+The OMP implementation therefore does not hide transcript rows, add a widget, replace a tool, or alter any message or session data.
 
 ## Complete currently reachable Pi transcript taxonomy
 
@@ -211,13 +221,13 @@ The test fixture enumerates every class below through the centralized policy, an
 | `synthetic-assistant` | No authoritative Firstmate source found | Policy-hidden, but Pi exposes no generic assistant-role renderer. |
 | `unknown` | Future or unclassified transcript component | Policy-hidden, but no generic renderer exists; never claimed as covered. |
 
-The installed extension API has no supported global transcript filter, user-message renderer, assistant-message renderer, chat-container API, or generic custom-tool wrapper.
-Pi 0.81.1 through 0.82.0 export `AssistantMessageComponent` and `InteractiveMode`, so Calm uses separate idempotent, API-probed adapters for assistant thinking layout and the complete operational-user transcript row while leaving all message data and non-Calm rendering unchanged; see the [compatibility contract](calm.md#pi-compatibility) for how a future Pi lacking one of those exports is handled.
+The installed Pi extension API has no supported global transcript filter, user-message renderer, assistant-message renderer, chat-container API, or generic custom-tool wrapper.
+Pi 0.81.1 through 0.82.0 export `AssistantMessageComponent` and `InteractiveMode`, so Calm uses separate idempotent, API-probed adapters for assistant thinking layout and the complete operational-user transcript row while leaving all message data and non-Calm rendering unchanged; see the [compatibility contract](calm.md#compatibility-and-ownership) for how a future Pi lacking one of those exports is handled.
 General component replacement, ANSI cursor erasure, provider-context mutation, and installed-file patching remain rejected as unsupported or preservation-breaking workarounds.
 
 ## Cross-harness verification record
 
-The original five-harness inspection was performed on 2026-07-22, with every integration surface rechecked and Pi reverified at 0.81.1 on 2026-07-23 for the latest Calm presentation change.
+The original five-harness inspection was performed on 2026-07-22, with every integration surface rechecked, Pi reverified at 0.81.1 on 2026-07-23, and OMP's native Calm surface verified at 17.2.1 on 2026-08-01.
 
 ```text
 $ claude --version
@@ -228,6 +238,8 @@ $ opencode --version
 1.17.18
 $ pi --version
 0.81.1
+$ omp --version
+omp/17.2.1
 $ grok --version
 grok 0.2.106 (bde89716f679)
 ```
@@ -238,29 +250,33 @@ grok 0.2.106 (bde89716f679)
 | Codex CLI 0.144.6 | Not feasible through the inspected supported project surface. | The tracked hooks expose session, pre-tool, and stop handling, while the plugin and feature inventories expose no TUI tool-row renderer or transcript redraw control. |
 | OpenCode 1.17.18 | Not feasible without violating the preservation boundary. | Plugins expose events and tool execution hooks, not a built-in transcript-row renderer; same-name tool replacement changes execution rather than presentation alone. |
 | Pi (verified 0.81.1 through 0.82.0) | Partially feasible with two API-probed exported-class adapters. | Public APIs control working visibility, collapsed labels, known tool slots, custom entries, and expansion redraws; exported assistant and interactive-mode classes provide the collapsed-thinking and operational-user layout boundaries, gated on the exact method's presence rather than a version number, while generic user, tool, and status filtering remains unavailable. |
+| OMP 17.2.1 | Supported presentation subset only. | Public `ExtensionContext.ui.getToolsExpanded()`, `setToolsExpanded()`, and `setWorkingMessage()` support tool-expansion and working-message presentation; OMP exposes no supported transcript-wide or ordinary-row renderer, so Calm leaves those rows unchanged. |
 | Grok CLI 0.2.106 | Not feasible through the inspected supported project surface. | Project hooks expose lifecycle and tool interception, while the plugin CLI exposes no row-renderer contract; `--minimal` changes the whole screen mode rather than selected transcript rows. |
 
 These conclusions are deliberately limited to the named versions and supported surfaces.
 They do not claim that a harness can never add the missing renderer API.
-For the duplicate-turn fix and the latest presentation change, the launch templates for Claude, Codex, OpenCode, Pi, and Grok and the watcher, turn-end, session-start, away-supervisor, and from-firstmate producers were re-inspected.
+For the duplicate-turn fix and the latest presentation change, the launch templates for Claude, Codex, OpenCode, Pi, OMP, and Grok and the watcher, turn-end, session-start, away-supervisor, and from-firstmate producers were re-inspected.
 The canonical encoder and every non-Pi delivery path remain unchanged, and the tmux, Herdr, Zellij, Orca, and cmux runtime surfaces continue to transport the same input selected by the harness adapter.
-Only Pi's Calm presentation implementation changed; every producer and non-Pi transport remains unchanged.
+Only the Pi and OMP Calm presentation implementations changed; every producer and transport remains unchanged.
 
 ## Regression coverage
 
-`tests/fm-calm-pi-extension.test.sh` compares wrapped and stock renderers, verifies all seven built-ins plus `fm_watch_arm_pi`, exercises redraw of already-rendered tool, thinking, current operational-user, and legacy synthetic rows, and covers every policy class.
+`tests/fm-calm-pi-extension.test.sh` compares wrapped and stock renderers, verifies all seven built-ins plus `fm_watch_arm_pi`, exercises redraw of already-rendered tool, thinking, current operational-user, and legacy synthetic rows, and covers every Pi policy class.
 It covers persisted preference restoration across every session-start reason and a real restart, proves the working-ship presentation and Calm-off stock `Working...` row through a delayed deterministic provider, asserts no Calm status row, verifies operational messages remain exact ordinary user-role session entries and complete exports, and drives genuine 100 by 44, 160 by 36, and 180 by 44 terminal fixtures.
 A native deterministic `/skill:ahoy` turn produces thinking, tool-call, and tool-result blocks, asserts that the collapsed skill-to-final gap equals the two-row visible-only baseline, expands and re-collapses original thinking, restores Calm-off rendering, verifies persisted hidden history, and repeats the geometry assertion after restart with `terminal.clearOnShrink` explicitly off.
-The operational provider path covers Calm loaded on, loaded off, default preference, extension absent, exact watcher delivery, narrow bare-marker legacy input, persisted restart replay, a genuine captain prompt, and adjacent notifications coalesced into one intended processing turn.
+The Pi operational provider path covers Calm loaded on, loaded off, default preference, extension absent, exact watcher delivery, narrow bare-marker legacy input, persisted restart replay, a genuine captain prompt, and adjacent notifications coalesced into one intended processing turn.
 It asserts one persisted and rendered captain answer, exact user-role operational envelopes in order, no replacement custom messages, one processing result, zero operational transcript rows, and the two-row neighboring-assistant geometry for live, adjacent, and restart paths.
 Quoted current markers, ASCII-only labels, ordinary text before a marker, unrelated U+2063 placement, and image-bearing input remain visible in component and native transcript checks.
-`tests/fm-pi-primary-live-e2e.test.sh` also proves the working ship replaces the built-in `Working...` row while Calm is active on the credentialed provider path, and that it clears when the run settles, before continuing its ordinary watcher lifecycle.
+`tests/fm-calm-omp-extension.test.sh` exercises default-off behavior, exact `on` and `off` persistence with private atomic replacement, `FM_HOME`/`FM_ROOT_OVERRIDE`/`FM_CONFIG_OVERRIDE` resolution, OMP `session_start` and `session_switch` reloads, shutdown restoration, automatic-continuation working state, and the supported tool-expansion and working-message seams.
+The OMP fixture also asserts that Calm does not call message transport APIs, change model input, or add session data.
+`tests/fm-pi-primary-live-e2e.test.sh` proves the Pi working ship replaces the built-in `Working...` row while Calm is active on the credentialed provider path, and that it clears when the run settles, before continuing its ordinary watcher lifecycle.
 `tests/fm-pi-primary-types.test.sh` performs strict no-emit TypeScript checking against the installed Pi declarations, currently package version 0.81.1.
 
 The relevant commands are:
 
 ```sh
 tests/fm-calm-pi-extension.test.sh
+tests/fm-calm-omp-extension.test.sh
 FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 tests/fm-pi-primary-types.test.sh
 ```
