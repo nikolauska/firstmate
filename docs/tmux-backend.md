@@ -9,7 +9,7 @@ Install tmux with `brew install tmux` or your platform package manager.
 The universal harness and toolchain requirements are in [`configuration.md`](configuration.md#toolchain).
 
 tmux is the compatibility fallback when no explicit setting or runtime auto-detection selects another backend.
-When no explicit per-task backend, `FM_BACKEND`, or `config/backend` selection exists, Firstmate selects Herdr for new work and uses tmux only for a concrete Herdr issue.
+[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns Firstmate's Herdr-first dispatch preference and fail-closed selection behavior.
 Select tmux explicitly with local `config/backend` containing `tmux`, with `FM_BACKEND=tmux` for one launch, or by asking Firstmate to use tmux.
 An explicit selection is also the opt-out from Herdr or cmux runtime auto-detection.
 
