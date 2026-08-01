@@ -100,15 +100,12 @@ When poll returns a `whiteboard` prompt, read its bounded edit summary first, op
 - Run `lavish-axi export <html-file> [--out <path>]` to write a portable copy of the artifact with local assets inlined.
 Remote references remain links and may need network access to render.
 Users can also export from the browser chrome's overflow menu.
-- Use the bundled `scripts/share-safe.sh` helper for public sharing only after explicit user authorization for that specific artifact and a safe channel approved for its contents.
-The helper accepts only the HTML file path, uses `LAVISH_AXI_HTML_APP_TOKEN` when it is already set, captures the complete command response, and returns only the visitable URL.
-Never run `lavish-axi share` directly because its response exposes the secret update key.
-Never pass a token with `--token`.
-For password-protected sharing, use the browser chrome's overflow share control so password entry never appears in a command transcript or process arguments.
+- Share only from the browser chrome's overflow menu after explicit user authorization for that specific artifact and a safe channel approved for its contents.
+Never run `lavish-axi share` or a wrapper around it.
+CLI sharing remains disabled until a permissions-restricted owner exists for the one-time update and deletion key.
+Enter any password or token only through the browser controls so it never appears in a command transcript or process arguments.
 Never share private, secret, customer, or otherwise sensitive content by default.
 Prefer local review or `lavish-axi export` when sharing is not explicitly authorized and safe.
-Treat every returned `update_key` value as a secret.
-Do not display, log, persist, or send an `update_key` through an untrusted channel.
 - Run `lavish-axi stop` to shut down the background server.
 The server also self-stops when idle or after the last session ends with nothing connected.
 - Lavish does not auto-inject any design system, so artifacts stay portable when opened directly without the command running.
