@@ -1,6 +1,8 @@
 ---
 name: lavish
 description: Turn complex or visual agent responses into rich, reviewable HTML artifacts users can annotate and send feedback on, using an already available lavish-axi command. It applies to plans, comparisons, diagrams, tables, code diffs, reports, or other content easier to grasp visually than as prose, and excludes plain prose or simple answers.
+metadata:
+  internal: true
 ---
 
 # Lavish Editor
@@ -98,7 +100,11 @@ When poll returns a `whiteboard` prompt, read its bounded edit summary first, op
 - Run `lavish-axi export <html-file> [--out <path>]` to write a portable copy of the artifact with local assets inlined.
 Remote references remain links and may need network access to render.
 Users can also export from the browser chrome's overflow menu.
-- Run `lavish-axi share <html-file> [--password <pw>] [--token <t>]` only after explicit user authorization for that specific artifact and a safe channel approved for its contents.
+- Use the bundled `scripts/share-safe.sh` helper for public sharing only after explicit user authorization for that specific artifact and a safe channel approved for its contents.
+The helper accepts only the HTML file path, uses `LAVISH_AXI_HTML_APP_TOKEN` when it is already set, captures the complete command response, and returns only the visitable URL.
+Never run `lavish-axi share` directly because its response exposes the secret update key.
+Never pass a token with `--token`.
+For password-protected sharing, use the browser chrome's overflow share control so password entry never appears in a command transcript or process arguments.
 Never share private, secret, customer, or otherwise sensitive content by default.
 Prefer local review or `lavish-axi export` when sharing is not explicitly authorized and safe.
 Treat every returned `update_key` value as a secret.

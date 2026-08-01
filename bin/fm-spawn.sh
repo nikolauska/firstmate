@@ -243,8 +243,9 @@ esac
 
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
 # FM_BACKEND env, else config/backend, else runtime auto-detection, else the
-# tmux compatibility fallback (fm_backend_name). Firstmate passes explicit
-# --backend herdr for new work and uses tmux only for a concrete Herdr issue.
+# tmux compatibility fallback (fm_backend_name). With no explicit per-task,
+# environment, or config selection, Firstmate passes --backend herdr for new
+# work and uses tmux only for a concrete Herdr issue.
 # fm_backend_validate_spawn refuses unknown or non-spawn-capable backends. The
 # resolved value is recorded in meta only when it is NOT tmux
 # (fm-teardown.sh and fm-watch.sh's window_backend/fm_backend_of_meta already

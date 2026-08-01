@@ -183,8 +183,8 @@ The generic effort fallback and its precedence are owned by `harness-adapters`: 
 Do not add model-specific versions of that policy.
 
 `secondmate-provisioning` owns secondmate harness pins and inherited local material, while `harness-adapters` owns the harness consequences.
-For new work, dispatch with explicit `--backend herdr` and use tmux only for a concrete Herdr issue.
-Explicit `--backend`, `FM_BACKEND`, and `config/backend` selections remain authoritative.
+When no explicit per-task backend, `FM_BACKEND`, or `config/backend` selection exists, dispatch new work with explicit `--backend herdr` and use tmux only for a concrete Herdr issue.
+Never override an explicit backend selection to apply that preference.
 Dispatch only on a backend that `fm-spawn` validates as spawn-capable.
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry or fall back to another backend.
 
