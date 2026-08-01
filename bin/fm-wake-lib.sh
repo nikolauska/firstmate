@@ -379,20 +379,11 @@ fm_wake_clean_field() {
   LC_ALL=C tr '\t\r\n' '   '
 }
 
-fm_wake_append() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload epoch seq seq_file status
-  case "$kind" in
-    signal|stale|check|heartbeat) ;;
-    *) printf 'fm_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
-  esac
-
-  clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
-  clean_payload=$(printf '%s' "$payload" | fm_wake_clean_field)
+fm_wake_append_locked() {
+  local kind=$1 clean_key=$2 clean_payload=$3 epoch seq seq_file status
   epoch=$(date +%s)
   seq_file="$STATE/.wake-queue.seq"
   status=0
-
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   seq=$(cat "$seq_file" 2>/dev/null || echo 0)
   case "$seq" in
     ''|*[!0-9]*) seq=0 ;;
@@ -402,6 +393,39 @@ fm_wake_append() {
   if [ "$status" -eq 0 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$epoch" "$seq" "$kind" "$clean_key" "$clean_payload" >> "$FM_WAKE_QUEUE" || status=$?
   fi
+  return "$status"
+}
+
+fm_wake_append() {
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload status
+  case "$kind" in
+    signal|stale|check|heartbeat) ;;
+    *) printf 'fm_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
+  esac
+
+  clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
+  clean_payload=$(printf '%s' "$payload" | fm_wake_clean_field)
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_wake_append_locked "$kind" "$clean_key" "$clean_payload"
+  status=$?
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
+# Append a stale wake only while its task is not in cleanup. The marker check and
+# append share the queue lock so cleanup cannot begin between those two operations.
+fm_wake_append_stale_unless_retiring() {
+  local key=$1 payload=$2 marker=$3 clean_key clean_payload status
+  [ -n "$marker" ] || return 2
+  clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
+  clean_payload=$(printf '%s' "$payload" | fm_wake_clean_field)
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 1
+  fi
+  fm_wake_append_locked stale "$clean_key" "$clean_payload"
+  status=$?
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   return "$status"
 }

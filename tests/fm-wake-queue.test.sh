@@ -144,6 +144,76 @@ test_not_working_stale_enqueue_before_suppressor() {
   pass "a not-provably-working stale wake is queued before its suppressor is advanced"
 }
 
+test_cleanup_hash_change_does_not_resurface_retiring_task() {
+  local dir state fakebin out drain_out capture_file window key hash_a hash_b pid i count sig
+  dir=$(make_case cleanup-retirement)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  drain_out="$dir/drain.out"
+  capture_file="$dir/pane.txt"
+  window="test:fm-retiring"
+  printf 'pane generation A\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/retiring.meta"
+  printf 'working: waiting\n' > "$state/retiring.status"
+  if [ "$(uname)" = Darwin ]; then sig=$(stat -f '%z:%Fm' "$state/retiring.status"); else sig=$(stat -c '%s:%Y' "$state/retiring.status"); fi
+  printf '%s' "$sig" > "$state/.seen-retiring_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  hash_a=$(hash_text 'pane generation A')
+  printf '%s' "$hash_a" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "first stale cycle did not surface"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "first stale cycle did not print its wake"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "first stale drain failed"
+  count=$(awk -F '\t' '$3 == "stale" { n++ } END { print n + 0 }' "$drain_out")
+  [ "$count" -eq 1 ] || fail "first stale drain did not contain exactly one stale wake"
+
+  printf 'pane generation B\n' > "$capture_file"
+  hash_b=$(hash_text 'pane generation B')
+  printf '%s' "$hash_b" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.retiring-retiring"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 20 ] && is_live_non_zombie "$pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  is_live_non_zombie "$pid" || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fail "retiring task watcher exited instead of suppressing cleanup hash change"; }
+  [ ! -s "$state/.wake-queue" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fail "cleanup hash change enqueued a duplicate stale wake"; }
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "retirement drain failed"
+  count=$(awk -F '\t' '$3 == "stale" { n++ } END { print n + 0 }' "$drain_out")
+  [ "$count" -eq 0 ] || fail "retirement drain surfaced a duplicate stale wake"
+
+  rm -f "$state/.retiring-retiring"
+  printf '%s' "$hash_a" > "$state/.stale-$key"
+  printf '%s' "$hash_b" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "normal hash-change stale cycle did not surface"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "normal hash-change stale cycle was suppressed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "normal hash-change drain failed"
+  count=$(awk -F '\t' '$3 == "stale" { n++ } END { print n + 0 }' "$drain_out")
+  [ "$count" -eq 1 ] || fail "normal hash-change drain did not contain its legitimate stale wake"
+  pass "cleanup hash changes do not duplicate stale wakes, while normal hash changes still surface"
+}
+
+
 test_check_output_is_queued() {
   local dir state fakebin out drain_out check_file
   dir=$(make_case check)
@@ -433,6 +503,7 @@ test_concurrent_append_and_drain
 test_signal_catchup_without_running_watcher
 test_stale_enqueue_before_suppressor
 test_not_working_stale_enqueue_before_suppressor
+test_cleanup_hash_change_does_not_resurface_retiring_task
 test_check_output_is_queued
 test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates

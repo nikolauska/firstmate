@@ -102,6 +102,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -118,6 +120,29 @@ FORCE=${2:-}
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
 FM_LOCK_LOG_PREFIX=teardown
+RETIREMENT_MARKER="$STATE/.retiring-$ID"
+RETIREMENT_MARKER_ACTIVE=0
+teardown_retirement_marker_cleanup() {
+  local status=$?
+  if [ "$RETIREMENT_MARKER_ACTIVE" = 1 ]; then
+    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+    rm -f "$RETIREMENT_MARKER" || true
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  fi
+  exit "$status"
+}
+
+begin_task_retirement() {
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  if ! : > "$RETIREMENT_MARKER"; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 1
+  fi
+  RETIREMENT_MARKER_ACTIVE=1
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  trap teardown_retirement_marker_cleanup EXIT
+}
+
 
 META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
@@ -1232,6 +1257,11 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
     fi
   fi
 fi
+begin_task_retirement || {
+  echo "error: could not publish task retirement marker for $ID" >&2
+  exit 1
+}
+
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
@@ -1351,6 +1381,13 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.omp-ready" \
   "$STATE/$ID.omp-started" \
   "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+if ! rm -f "$RETIREMENT_MARKER"; then
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  exit 1
+fi
+fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+RETIREMENT_MARKER_ACTIVE=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

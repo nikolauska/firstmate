@@ -1269,6 +1269,31 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+test_teardown_publishes_retirement_before_endpoint_cleanup() {
+  local case_dir marker seen
+  case_dir=$(make_case retirement-marker)
+  write_meta "$case_dir" local-only ship
+  marker="$case_dir/state/.retiring-task-x1"
+  seen="$case_dir/retirement-seen"
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = kill-window ]; then
+  [ -e "${FM_FAKE_RETIREMENT_MARKER:?}" ] || exit 1
+  : > "${FM_FAKE_RETIREMENT_SEEN:?}"
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  FM_FAKE_RETIREMENT_MARKER="$marker" FM_FAKE_RETIREMENT_SEEN="$seen" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "retirement-marker: forced teardown failed"
+  [ -e "$seen" ] || fail "retirement-marker: endpoint cleanup ran before retirement marker publication"
+  [ ! -e "$marker" ] || fail "retirement-marker: successful teardown left the retirement marker behind"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "retirement-marker: task metadata survived teardown"
+  pass "teardown publishes a retirement marker before changing the endpoint and clears it after metadata removal"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -1412,6 +1437,7 @@ test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_missing_busy_sidecar_completes
+test_teardown_publishes_retirement_before_endpoint_cleanup
 test_herdr_teardown_clears_escalation_marker
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close
 test_herdr_projection_teardown_retains_journal_when_close_unconfirmed

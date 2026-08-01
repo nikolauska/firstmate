@@ -252,6 +252,27 @@ recorded_windows() {
     printf '%s\n' "$w"
   done
 }
+# A teardown marks its task before changing the endpoint. Stale enqueueing checks
+# that marker under the same queue lock as cleanup-boundary publication, so a
+# changed pane hash cannot become a new stale wake during retirement.
+task_retirement_marker() {
+  printf '%s/.retiring-%s' "$STATE" "$1"
+}
+
+task_is_retiring() {
+  local task=$1 marker
+  [ -n "$task" ] || return 1
+  marker=$(task_retirement_marker "$task")
+  [ -e "$marker" ] || [ -L "$marker" ]
+}
+
+stale_wake_append() {  # <window> <reason>; 1 means task is retiring
+  local win=$1 reason=$2 task marker
+  task=$(window_to_task "$win" "$STATE")
+  marker=$(task_retirement_marker "$task")
+  fm_wake_append_stale_unless_retiring "$win" "$reason" "$marker"
+}
+
 
 # Consecutive wedge-escalation count for a window past FM_WEDGE_DEMAND_INSPECT_COUNT
 # (default 3): a pane that keeps re-wedging on the SAME stale hash - each
@@ -274,7 +295,7 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason rc
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -290,9 +311,14 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
-        fm_wake_append stale "$win" "$reason" || exit 1
-        rm -f "$since_file"
-        wake "$reason"
+        if stale_wake_append "$win" "$reason"; then
+          rm -f "$since_file"
+          wake "$reason"
+        else
+          rc=$?
+          [ "$rc" -eq 1 ] || return "$rc"
+          triage_log "absorbed stale during task retirement: $win"
+        fi
       fi
       ;;
   esac
@@ -323,7 +349,7 @@ busy_turn_over_age() {  # <task>
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason rc
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -336,9 +362,14 @@ handle_paused_stale() {  # <window> <task> <hash>
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
-    fm_wake_append stale "$win" "$reason" || exit 1
-    date +%s > "$rf"
-    wake "$reason"
+    if stale_wake_append "$win" "$reason"; then
+      date +%s > "$rf"
+      wake "$reason"
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] || return "$rc"
+      triage_log "absorbed stale during task retirement: $win"
+    fi
   fi
   triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
 }
@@ -410,9 +441,15 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last
+  local win=$1 h=$2 key task last rc
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  fm_wake_append stale "$win" "stale: $win" || exit 1
+  if stale_wake_append "$win" "stale: $win"; then
+    rc=0
+  else
+    rc=$?
+    [ "$rc" -eq 1 ] || return "$rc"
+    triage_log "absorbed stale during task retirement: $win"
+  fi
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
   task=$(window_to_task "$win" "$STATE")
@@ -424,6 +461,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   else
     rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   fi
+  [ "$rc" -eq 1 ] && return 0
   wake "stale: $win"
 }
 
@@ -881,6 +919,13 @@ EOF
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
+    if task_is_retiring "$task"; then
+      printf '%s' "$h" > "$hf"
+      echo 0 > "$cf"
+      rm -f "$sf" "$ssf" "$ewf" "$pf"
+      triage_log "absorbed stale during task retirement: $w"
+      continue
+    fi
     prev=$(cat "$hf" 2>/dev/null || true)
     # Busy match: a backend's native semantic state when available (herdr), else
     # the last 6 non-blank lines only (the TUI footer area, where every verified
@@ -902,9 +947,15 @@ EOF
         elif afk_present; then
           # Daemon owns triage: one-shot per distinct stale hash, as before.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            fm_wake_append stale "$w" "stale: $w" || exit 1
-            printf '%s' "$h" > "$sf"
-            wake "stale: $w"
+            if stale_wake_append "$w" "stale: $w"; then
+              printf '%s' "$h" > "$sf"
+              wake "stale: $w"
+            else
+              rc=$?
+              [ "$rc" -eq 1 ] || exit "$rc"
+              printf '%s' "$h" > "$sf"
+              triage_log "absorbed stale during task retirement: $w"
+            fi
           fi
         elif stale_is_terminal "$w" "$STATE"; then
           # The log's last line is captain-relevant - but that alone is not
@@ -927,11 +978,18 @@ EOF
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
-              wake "stale: $w"
+              if stale_wake_append "$w" "stale: $w"; then
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf"
+                mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
+                wake "stale: $w"
+              else
+                rc=$?
+                [ "$rc" -eq 1 ] || exit "$rc"
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf"
+                triage_log "absorbed stale during task retirement: $w"
+              fi
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a
