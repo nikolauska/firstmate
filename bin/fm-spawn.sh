@@ -14,7 +14,7 @@
 #   runtime auto-detection (the runtime firstmate itself is executing inside -
 #   $TMUX, HERDR_ENV=1, or cmux runtime signals; bin/fm-backend.sh's
 #   fm_backend_detect, with cmux fallback details in docs/cmux-backend.md),
-#   then tmux.
+#   then the tmux compatibility fallback.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
 #   terminal, so ship/scout Orca spawns do not run treehouse get; cmux is a
@@ -22,8 +22,8 @@
 #   auto-detected herdr or cmux spawn prints a loud stderr notice;
 #   auto-detected tmux stays silent; zellij and orca are never auto-detected.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
-#   blocked backend contract. Default tmux spawns do not write backend= to meta;
-#   absent backend= means tmux. cmux does not support --secondmate spawns yet.
+#   compatibility tmux spawns do not write backend= to meta; absent backend=
+#   means tmux. cmux does not support --secondmate spawns yet.
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
@@ -242,12 +242,14 @@ case "$EFFORT" in
 esac
 
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
-# FM_BACKEND env, else config/backend, else runtime auto-detection, else
-# default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown or
-# non-spawn-capable backends. The resolved value is
-# recorded in meta only when it is NOT tmux (fm-teardown.sh and fm-watch.sh's
-# window_backend/fm_backend_of_meta already treat an absent backend= as tmux),
-# so the default path's meta stays byte-identical.
+# FM_BACKEND env, else config/backend, else runtime auto-detection, else the
+# tmux compatibility fallback (fm_backend_name). Firstmate passes explicit
+# --backend herdr for new work and uses tmux only for a concrete Herdr issue.
+# fm_backend_validate_spawn refuses unknown or non-spawn-capable backends. The
+# resolved value is recorded in meta only when it is NOT tmux
+# (fm-teardown.sh and fm-watch.sh's window_backend/fm_backend_of_meta already
+# treat an absent backend= as tmux), so the compatibility path's meta stays
+# byte-identical.
 if [ "$BACKEND_SET" -eq 1 ]; then
   BACKEND=$BACKEND_ARG
 else

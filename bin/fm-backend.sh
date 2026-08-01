@@ -7,12 +7,14 @@
 # data/fm-backend-design-d7/herdr-addendum.md ("Events as the core
 # abstraction"). P1 extracted the tmux command sequences that fm-send.sh,
 # fm-peek.sh, fm-watch.sh, fm-spawn.sh, and fm-teardown.sh already ran inline
-# into bin/backends/tmux.sh, with those SAME command sequences, so the default
-# (tmux) path stays byte-identical. P2 adds bin/backends/herdr.sh, an
-# EXPERIMENTAL spawn-capable backend behind `--backend herdr`/`FM_BACKEND=herdr`/
-# `config/backend`, and behind runtime auto-detection when firstmate itself is
-# running inside herdr with no explicit backend setting; see herdr-addendum.md and
+# into bin/backends/tmux.sh, with those SAME command sequences, so the
+# compatibility fallback (tmux) path stays byte-identical. P2 adds
+# bin/backends/herdr.sh, an EXPERIMENTAL spawn-capable backend behind
+# `--backend herdr`/`FM_BACKEND=herdr`/`config/backend`, and behind runtime
+# auto-detection when firstmate itself is running inside herdr with no explicit
+# backend setting; see herdr-addendum.md and
 # data/fm-backend-design-d7/herdr-verification-p2.md for its empirical basis.
+#
 # P3 adds bin/backends/zellij.sh, also EXPERIMENTAL and spawn-capable, behind
 # `--backend zellij`/`FM_BACKEND=zellij`/`config/backend` - NOT behind runtime
 # auto-detection (report.md's Open Question #2: start with a dedicated
@@ -32,10 +34,10 @@
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
-# `backend=tmux` for a default-backend task, so existing and newly spawned
-# default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# spawn-capable backend, currently experimental herdr, zellij, orca, or cmux,
-# carries an explicit `backend=` line.
+# `backend=tmux` for a compatibility-path task, so existing and newly spawned
+# compatibility-path metas stay byte-identical.
+# Only a task spawned on a non-tmux spawn-capable backend, currently
+# experimental herdr, zellij, orca, or cmux, carries an explicit `backend=` line.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -233,16 +235,17 @@ fm_backend_detect_cmux_app_is_ancestor() {
 # fm_backend_name: resolve the ACTIVE backend for a NEW spawn, absent an
 # explicit per-task override. Precedence: FM_BACKEND env, then config/backend
 # (a single word on its first non-empty line, mirroring config/crew-harness),
-# then runtime auto-detection (fm_backend_detect), then default tmux. A
-# per-task `--backend` flag is parsed by the caller (fm-spawn.sh) and takes
-# precedence over this resolution entirely; it is not read here. Auto-detect
-# fires only when nothing was explicitly configured, so an explicit setting
-# always wins. Selecting herdr or cmux via auto-detect prints one loud stderr
-# notice (both are experimental); auto-detecting tmux stays silent - it is
-# today's default-path behavior and callers must see zero change. The cmux
-# notice names the winning signal, so a fallback-detected cmux (bundle id or
-# ancestry, after the claude wrapper stripped CMUX_WORKSPACE_ID) is visibly
-# distinct from the primary-marker case.
+# then runtime auto-detection (fm_backend_detect), then the tmux compatibility
+# fallback. A per-task `--backend` flag is parsed by the caller (fm-spawn.sh)
+# and takes precedence over this resolution entirely; it is not read here.
+# Auto-detect fires only when nothing is explicitly configured, so an explicit
+# setting always wins. Firstmate passes explicit `--backend herdr` for new work
+# and uses tmux only for a concrete Herdr issue. Selecting herdr or cmux via
+# auto-detect prints one loud stderr notice (both are experimental);
+# auto-detecting tmux stays silent as the compatibility fallback.
+# The cmux notice names the winning signal, so a fallback-detected cmux (bundle
+# id or ancestry, after the claude wrapper stripped CMUX_WORKSPACE_ID) is
+# visibly distinct from the primary-marker case.
 fm_backend_name() {
   local line v detected marker
   if [ -n "${FM_BACKEND:-}" ]; then
