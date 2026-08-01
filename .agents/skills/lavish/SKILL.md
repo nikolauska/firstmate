@@ -1,6 +1,7 @@
 ---
 name: lavish
 description: Turn complex or visual agent responses into rich, reviewable HTML artifacts users can annotate and send feedback on, using an already available lavish-axi command. It applies to plans, comparisons, diagrams, tables, code diffs, reports, or other content easier to grasp visually than as prose, and excludes plain prose or simple answers.
+metadata: { internal: true }
 ---
 
 # Lavish Editor
@@ -98,11 +99,11 @@ When poll returns a `whiteboard` prompt, read its bounded edit summary first, op
 - Run `lavish-axi export <html-file> [--out <path>]` to write a portable copy of the artifact with local assets inlined.
 Remote references remain links and may need network access to render.
 Users can also export from the browser chrome's overflow menu.
-- Run `lavish-axi share <html-file> [--password <pw>] [--token <t>]` only after explicit user authorization for that specific artifact and a safe channel approved for its contents.
-Never share private, secret, customer, or otherwise sensitive content by default.
-Prefer local review or `lavish-axi export` when sharing is not explicitly authorized and safe.
-Treat every returned `update_key` value as a secret.
-Do not display, log, persist, or send an `update_key` through an untrusted channel.
+- CLI publication is disabled.
+Use the browser's publish workflow only after explicit user authorization for that specific artifact and a safe channel approved for its contents.
+Never publish private, secret, customer, or otherwise sensitive content by default.
+The browser publish dialog does not accept CLI token controls, and any preconfigured ambient token is handled internally.
+Until deletion-key ownership exists, do not promise later updates or deletion, and prefer local review or `lavish-axi export` for content requiring lifecycle management.
 - Run `lavish-axi stop` to shut down the background server.
 The server also self-stops when idle or after the last session ends with nothing connected.
 - Lavish does not auto-inject any design system, so artifacts stay portable when opened directly without the command running.

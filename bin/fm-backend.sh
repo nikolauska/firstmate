@@ -239,7 +239,8 @@ fm_backend_detect_cmux_app_is_ancestor() {
 # fallback. A per-task `--backend` flag is parsed by the caller (fm-spawn.sh)
 # and takes precedence over this resolution entirely; it is not read here.
 # Auto-detect fires only when nothing is explicitly configured, so an explicit
-# setting always wins. Firstmate passes explicit `--backend herdr` for new work
+# setting always wins. When no explicit per-task, environment, or config backend
+# selection exists, Firstmate passes explicit `--backend herdr` for new work
 # and uses tmux only for a concrete Herdr issue. Selecting herdr or cmux via
 # auto-detect prints one loud stderr notice (both are experimental);
 # auto-detecting tmux stays silent as the compatibility fallback.
