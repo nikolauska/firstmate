@@ -103,7 +103,7 @@ Users can also export from the browser chrome's overflow menu.
 - Share only from the browser chrome's overflow menu after explicit user authorization for that specific artifact and a safe channel approved for its contents.
 Never run `lavish-axi share` or a wrapper around it.
 CLI sharing remains disabled until a permissions-restricted owner exists for the one-time update and deletion key.
-Enter any password or token only through the browser controls so it never appears in a command transcript or process arguments.
+Enter any password only through the browser controls so it never appears in a command transcript or process arguments.
 Never share private, secret, customer, or otherwise sensitive content by default.
 Prefer local review or `lavish-axi export` when sharing is not explicitly authorized and safe.
 - Run `lavish-axi stop` to shut down the background server.
