@@ -42,15 +42,15 @@ Launching a supported harness inside it instantiates your first mate - and makes
 ## Features
 
 - **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.
-- **A visible crew** - every crewmate works in its own tmux window, experimental herdr/zellij tab, cmux workspace, or Orca terminal you can watch or type into; the first mate reconciles.
-- **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, or an Orca-managed worktree when `backend=orca`, so parallel work on one repo never collides.
+- **A visible crew** - every new ship, scout, and secondmate dispatch runs as an OMP agent in a Herdr tab, while retained adapters remain available for legacy endpoint inspection and recovery.
+- **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree; Herdr owns the task endpoint and Treehouse owns the worktree.
 - **Two task shapes** - ship tasks deliver authorized changes; scout tasks leave standalone investigation reports when the intake contract warrants separate research.
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` autonomy flag.
 - **Optional secondmates** - opt in to persistent second mates that run from isolated firstmate homes with their own `FM_HOME`, state, projects, and session lock, supervising project clones or a project-less firstmate-repo domain, kept on the primary firstmate version by guarded local fast-forwards and checked for live agent processes at session start.
-- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you; verified primary harnesses also get a turn-end backstop that blocks or follows up on a blind stop when work is under way and supervision is not live.
+- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you; OMP's native extension owns primary lifecycle integration while the durable watcher and recovery policy remain in shell.
 - **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-X behavior; a final reply promised in a thread becomes durable state that is reconciled from disk, so a restart or a compacted conversation cannot lose it; dry-run preview records would-be replies and dismissals locally before go-live.
-- **Strict project boundary** - the first mate is read-only over your projects except for the narrow guarded and captain-approved operations authorized by [hard rule 1](AGENTS.md#1-identity-and-prime-directives), including fleet sync's guarded safe branch pruning; crewmates make every other project change behind the configured merge authority.
-- **Restart-proof** - all state lives on disk and in the active session backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected); kill the session anytime and the next one reconciles, including confirmed-dead secondmate agents, and carries on.
+- **Strict project boundary** - the first mate is read-only over your projects except for the narrow guarded and captain-approved operations authorized by [hard rule 1](AGENTS.md#1-identity-and-prime-directives), including fleet sync's guarded safe branch pruning; workers make every other project change behind the configured merge authority.
+- **Restart-proof** - state lives on disk and in Herdr for new endpoints; retained runtime adapters remain readable until old endpoint records and private homes are deliberately drained.
 
 Full detail on every feature lives in [docs/architecture.md](docs/architecture.md).
 
@@ -58,23 +58,21 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 ### Requirements
 
-- A verified primary agent harness: Claude Code, Grok, Pi, `pi-signed`, OMP, Codex, or OpenCode.
+- OMP 17.1.8 or newer with the required launch, extension, session, and resume capabilities.
+- Herdr 0.7.5 or newer with `jq` and Treehouse.
 - Git and the GitHub CLI, authenticated through `gh auth login`.
-- The CLI and dependencies for your selected runtime backend; tmux is the reference default.
+- The universal Firstmate CLI and dependency toolchain.
 
-The first mate detects and offers to install supported missing tools after you approve.
+New ship, scout, and secondmate work is fixed to `harness=omp` and `backend=herdr`.
+Existing records that name older harnesses or runtimes remain readable for inspection, recovery, cleanup, and safe refusal during the staged migration.
+The first mate detects and offers to install supported missing tools after you approve them.
 Backend-specific setup is linked in [Documentation](#documentation).
 
-### Recommended harnesses
+### Recommended harness
 
-**Claude Code, Grok, and Pi are equal co-primary recommendations** for running the primary firstmate session, with `pi-signed` supported as Pi's distinct signed-wrapper identity.
-Claude Code uses a tracked Stop hook for tokenless watcher re-arm and rewake, Grok uses background-notify wake cycles, and Pi uses its tracked primary watcher extension.
-All three have verified turn-end guard paths when launched with their documented setup.
-Pick whichever one matches your subscription and workflow.
-
-OMP is also verified and supported as a distinct primary harness, worker, scout, and second-mate runtime on tmux and Herdr.
-It shares an explicitly allowlisted Pi-compatible core without being recorded or recovered as Pi, discovers its tracked primary extension from `.omp/extensions/`, and refuses when its required capabilities are missing.
-Codex and OpenCode are also verified and supported as primary harnesses; Codex uses bounded foreground checkpoints, and OpenCode uses a TUI plugin, so both carry more harness-specific supervision tradeoffs than the three co-primaries.
+Use OMP for the primary firstmate session.
+Its native `.omp` extension owns primary session lifecycle integration, while Firstmate's shell contracts continue to own durable startup, supervision, away mode, project delivery, X mode, and recovery.
+The retained Claude Code, Grok, Pi, `pi-signed`, Codex, OpenCode, and Kimi integrations are compatibility readers and are not selected for new dispatches.
 
 ### Install and launch
 
@@ -84,27 +82,7 @@ git clone https://github.com/kunchenguid/firstmate
 cd firstmate
 ```
 
-Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
-
-**Claude Code**
-
-```sh
-claude
-```
-
-**Grok**
-
-```sh
-grok --trust
-```
-
-**Pi**
-
-```sh
-pi
-# or, when the signed wrapper is installed
-FM_PI_HARNESS=pi-signed pi-signed
-```
+Then launch OMP; AGENTS.md takes over from there:
 
 **OMP**
 
@@ -112,11 +90,12 @@ FM_PI_HARNESS=pi-signed pi-signed
 omp
 ```
 
-For Grok, `--trust` is needed once per clone so project hooks and the turn-end guard load; `/hooks-trust` inside Grok works too.
-For Pi, approve the project trust prompt once per clone on first launch so the tracked `.pi/extensions/*.ts` files auto-load.
-Pi's `/calm` toggle hides supported transcript chrome, including canonically classified Firstmate operational user rows, and uses a Calm-only animated working boat during active runs.
+The retained legacy harness integrations remain in the repository so existing primary sessions and endpoint records can be inspected or recovered during migration.
+
+
+### Calm
+
 OMP's `/calm` toggle uses its public UI seams to collapse tool output and simplify the active working message; OMP exposes no supported transcript-wide renderer, so its ordinary transcript rows remain unchanged.
-Both implementations preserve model context, delivery, ordering, tool execution, session data, and exports.
 The preference persists for the effective Firstmate home, and toggling it off restores ordinary rendering.
 [Calm's current behavior and supported limits](docs/calm.md) are separate from its [version-scoped maintainer evidence](docs/calm-mode-feasibility.md).
 
@@ -135,9 +114,10 @@ The preference persists for the effective Firstmate home, and toggling it off re
 > alright merge it
 ```
 
-### More backends
+### Runtime compatibility
 
-Setup guides for tmux (the default) and every other supported backend (herdr, zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
+Herdr is the only runtime for new dispatches.
+Setup guides for Herdr and the retained tmux, zellij, Orca, and cmux adapters are linked in [Documentation](#documentation) for compatibility inspection and recovery.
 
 ## How It Works
 
@@ -153,11 +133,11 @@ Setup guides for tmux (the default) and every other supported backend (herdr, ze
     │ backend sends / status files │
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
- │fm-task1│   │fm-task2│  ... │fm-taskN│   tmux windows, herdr/zellij tabs, cmux workspaces, or Orca terminals
- │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
+ │fm-task1│   │fm-task2│  ... │fm-taskN│   Herdr tabs
+ │crewmate│   │crewmate│      │crewmate│   one OMP agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
-  treehouse worktree, Orca worktree, or isolated secondmate home
+  treehouse worktree or isolated secondmate home
      │
      ├─ ship: project mode ► PR/local merge ► teardown
      │
@@ -165,9 +145,9 @@ Setup guides for tmux (the default) and every other supported backend (herdr, ze
 ```
 
 You chat with the first mate.
-It routes each request to a crewmate in its own session endpoint and git worktree, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
-Optional secondmates extend this to persistent second mates, dispatch profiles let you steer which harness handles which task, and an opt-in X mode lets the same fleet answer public mentions.
-`codex-app` is not a runtime backend yet; [docs/codex-app-backend.md](docs/codex-app-backend.md) owns the Codex App boundary.
+It routes each request to a crewmate in its own Herdr endpoint and git worktree, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
+Optional secondmates extend this to persistent second mates, while OMP-only dispatch profiles let you tune model and effort for each task; an opt-in X mode lets the same fleet answer public mentions.
+The retained runtime adapters and Codex App boundary remain documented for compatibility and are not selected for new dispatches.
 
 Full architecture - the supervision engine, worktree isolation, secondmates, dispatch profiles, project modes, optional X mode, fleet sync, and self-update - is in [docs/architecture.md](docs/architecture.md).
 

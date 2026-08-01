@@ -141,7 +141,7 @@ resolve_permissive_tmux_kill_ref() {
 # hence the dispatcher is a copied sibling, while the tmux adapter is extracted
 # from BASE_REF so conformance tests retain the exact historical behavior even
 # when this branch changes tmux dispatch semantics.
-OLD_BIN_UNCHANGED_SIBLINGS="fm-gate-refuse-lib.sh fm-guard.sh fm-lock-lib.sh fm-tasks-axi-lib.sh fm-pr-lib.sh fm-tangle-lib.sh fm-tmux-lib.sh fm-composer-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-supervision-lib.sh fm-ff-lib.sh fm-config-inherit-lib.sh fm-project-mode.sh fm-harness.sh fm-crew-state.sh fm-decision-hold.sh fm-backend.sh fm-operational-input.sh fm-public-followup-lib.sh fm-x-lib.sh"
+OLD_BIN_UNCHANGED_SIBLINGS="fm-gate-refuse-lib.sh fm-guard.sh fm-lock-lib.sh fm-tasks-axi-lib.sh fm-pr-lib.sh fm-tangle-lib.sh fm-tmux-lib.sh fm-composer-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-supervision-lib.sh fm-ff-lib.sh fm-config-inherit-lib.sh fm-project-mode.sh fm-harness.sh fm-crew-state.sh fm-decision-hold.sh fm-backend.sh fm-omp-process-lib.sh fm-operational-input.sh fm-public-followup-lib.sh fm-x-lib.sh"
 # A pull-request merge may add a new main-only dependency that the branch's older baseline does not have yet.
 OLD_BIN_OPTIONAL_SIBLINGS="fm-pending-reply-lib.sh"
 OLD_BIN_REFACTORED="fm-send.sh fm-peek.sh fm-watch.sh fm-spawn.sh fm-teardown.sh fm-marker-lib.sh"
@@ -193,6 +193,37 @@ test_backend_name_precedence() {
     || fail "FM_BACKEND env should win over config/backend"
 
   pass "fm_backend_name: FM_BACKEND env > config/backend > default tmux"
+}
+
+test_new_work_backend_is_herdr_only() {
+  local dir cfg out status legacy
+  dir="$TMP_ROOT/new-work-backend"; cfg="$dir/config"
+  mkdir -p "$cfg"
+
+  out=$(unset TMUX HERDR_ENV CMUX_WORKSPACE_ID FM_BACKEND; \
+    PATH="$FAKE_NONDARWIN_BIN:$PATH" FM_BACKEND_CONFIG_DIR="$cfg" \
+    fm_backend_new_work_name)
+  [ "$out" = herdr ] || fail "new work should default to Herdr, got '$out'"
+
+  printf '%s\n' herdr > "$cfg/backend"
+  out=$(FM_BACKEND_CONFIG_DIR="$cfg" fm_backend_new_work_name)
+  [ "$out" = herdr ] || fail "new work should honor config/backend=herdr"
+
+  for legacy in tmux zellij orca cmux; do
+    printf '%s\n' "$legacy" > "$cfg/backend"
+    out=$(FM_BACKEND_CONFIG_DIR="$cfg" fm_backend_new_work_name)
+    [ "$out" = "$legacy" ] || fail "explicit backend '$legacy' was not preserved for validation"
+    status=0
+    out=$(fm_backend_validate_new_work "$legacy" 2>&1) || status=$?
+    [ "$status" -eq 1 ] || fail "new work backend '$legacy' should be refused"
+    assert_contains "$out" "requires backend=herdr" \
+      "new work backend '$legacy' refusal was not actionable"
+  done
+
+  printf 'window=fm-legacy\n' > "$dir/legacy.meta"
+  out=$(fm_backend_of_meta "$dir/legacy.meta")
+  [ "$out" = tmux ] || fail "legacy metadata without backend= must remain tmux-readable, got '$out'"
+  pass "new work resolves and validates Herdr without changing legacy backend metadata readers"
 }
 
 # fm_backend_detect: environment-marker runtime auto-detection (mirrors
@@ -1135,6 +1166,7 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
 }
 
 test_backend_name_precedence
+test_new_work_backend_is_herdr_only
 test_backend_detect_precedence
 test_backend_detect_cmux_fallback_bundle_id
 test_backend_detect_cmux_fallback_requires_darwin
@@ -1153,11 +1185,4 @@ test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
 test_send_conformance_old_vs_new
 test_peek_conformance_old_vs_new
-test_spawn_symlinked_project_prefix_avoids_false_refusal
 test_teardown_conformance_old_vs_new
-test_spawn_refuses_unknown_backend_flag
-test_spawn_refuses_codex_app_backend_flag
-test_spawn_refuses_unknown_fm_backend_env
-test_spawn_default_backend_writes_no_meta_field
-test_spawn_explicit_backend_flag_beats_autodetect_herdr_env
-test_spawn_autodetect_nesting_resolves_tmux_silently

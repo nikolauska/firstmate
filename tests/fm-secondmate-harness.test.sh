@@ -1,41 +1,16 @@
 #!/usr/bin/env bash
-# Tests for the secondmate-vs-crewmate harness split, the optional model/effort
-# tokens config/secondmate-harness carries alongside the harness, and the
-# primary->secondmate inherited local-material propagation.
+# Focused tests for the OMP-only new-work resolver and legacy harness identity
+# detection used by inspection and recovery paths.
 #
-# Three capabilities are under test:
-#   A) Harness split. config/secondmate-harness sets the harness the PRIMARY uses
-#      to launch SECONDMATE agents, independent of config/crew-harness (the
-#      crewmate harness). fm-harness.sh secondmate resolves the fallback chain
-#      config/secondmate-harness -> config/crew-harness -> own; an absent or
-#      "default" secondmate-harness behaves exactly as the crew harness did before
-#      this knob existed (full backward-compat). fm-spawn.sh resolves a secondmate
-#      launch through that mode, durably (every respawn re-resolves), while an
-#      explicit per-spawn harness arg still wins.
-#   B) Inheritance. The primary pushes a declared, extensible set of LOCAL
-#      (gitignored) config items - config/crew-dispatch.json, config/crew-harness,
-#      config/backlog-backend, config/backend, config/herdr-presentation-spaces, and
-#      config/startup-memory-budget -
-#      down into each secondmate home's config/, so the secondmate's OWN crewmates,
-#      dispatch profiles, backlog backend, runtime-backend default, and Herdr
-#      presentation opt-in inherit the primary's settings. It is primary-authoritative
-#      (re-pushed at secondmate spawn, on the bootstrap secondmate sweep, and by
-#      config push).
-#      config/secondmate-harness is deliberately NOT inherited (secondmates do
-#      not spawn secondmates). After a successful push that changes allowlisted
-#      config under an already-running home, a literal-content reread instruction
-#      is written to the secondmate home and only its pointer is sent via the
-#      routed secondmate path (exact destination bytes, no summaries); unchanged
-#      config sends nothing unless a previous send failure is pending.
-
-#   C) Model/effort pin. config/secondmate-harness may carry optional model and
-#      effort tokens after the harness ("<harness> [<model>] [<effort>]"), read by
-#      fm-harness.sh secondmate-model / secondmate-effort. A bare harness-only
-#      line (today's format) yields empty model/effort - full backward-compat.
-#      fm-spawn.sh populates MODEL/EFFORT from those tokens for a --secondmate
-#      spawn only when the harness also resolves from that file, so the pin is
-#      durable across every respawn while explicit per-spawn harness/model/effort
-#      flags still win.
+# New ship, scout, and secondmate dispatches resolve through explicit `crew` and
+# `secondmate` modes and accept only OMP. Legacy adapter names remain readable
+# through the no-argument identity detector; they are not reused for new work.
+# The optional model/effort tokens in config/secondmate-harness remain available
+# only alongside the OMP secondmate value.
+#
+# The propagation tests below retain the primary-authoritative local-config
+# contract, but old secondmate launch-shape cases are not part of this focused
+# freeze suite; Herdr/OMP endpoint behavior is covered by fm-spawn-dispatch-profile.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -62,11 +37,8 @@ export FM_BACKEND=tmux
 # ===========================================================================
 # A) fm-harness.sh secondmate resolution + fallback (deterministic detect_own)
 # ===========================================================================
-# detect_own is pinned to claude via CLAUDECODE=1 so the "fall through to own"
-# cases are reproducible. Each row sets crew-harness / secondmate-harness in a
-# fresh config dir (a literal '-' means leave the file absent) and asserts BOTH
-# the secondmate resolution AND that crew resolution is unchanged (backward-compat).
-#   <label>^<crew-harness>^<secondmate-harness>^<expect-secondmate>^<expect-crew>
+# The new-work resolver always emits OMP. Explicit legacy values are covered by
+# the dispatch refusal tests in fm-spawn-dispatch-profile.test.sh.
 test_harness_resolution() {
   local label crew sm exp_sm exp_crew case_dir cfg got_sm got_crew n
   n=0
@@ -78,21 +50,19 @@ test_harness_resolution() {
     mkdir -p "$cfg"
     [ "$crew" = "-" ] || printf '%s\n' "$crew" > "$cfg/crew-harness"
     [ "$sm" = "-" ] || printf '%s\n' "$sm" > "$cfg/secondmate-harness"
-    got_sm=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
-    got_crew=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew)
+    got_sm=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
+    got_crew=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew)
     [ "$got_sm" = "$exp_sm" ] || fail "$label: secondmate resolved '$got_sm', expected '$exp_sm'"
     [ "$got_crew" = "$exp_crew" ] || fail "$label: crew resolved '$got_crew', expected '$exp_crew'"
   done <<'ROWS'
-both absent -> own (backward-compat)^-^-^claude^claude
-crew set, secondmate absent -> crew (backward-compat)^codex^-^codex^codex
-crew set, secondmate set -> secondmate wins, crew untouched^codex^grok^grok^codex
-crew absent, secondmate set -> secondmate value, crew own^-^grok^grok^claude
-signed Pi wrapper remains a distinct secondmate value^codex^pi-signed^pi-signed^codex
-secondmate=default defers to crew^codex^default^codex^codex
-crew=default resolves to own, secondmate follows^default^-^claude^claude
-secondmate=default with crew absent -> own^-^default^claude^claude
+both absent -> OMP default^-^-^omp^omp
+crew omp, secondmate absent -> OMP crew default^omp^-^omp^omp
+crew omp, secondmate omp -> OMP explicit^omp^omp^omp^omp
+crew absent, secondmate omp -> OMP secondmate^-^omp^omp^omp
+secondmate=default -> OMP crew default^omp^default^omp^omp
+crew=default -> OMP default^default^-^omp^omp
 ROWS
-  pass "A1 fm-harness.sh secondmate resolves the fallback chain; crew mode unchanged"
+  pass "A1 fm-harness.sh resolves new crewmate and secondmate work to OMP"
 }
 
 # ===========================================================================
@@ -121,16 +91,30 @@ test_secondmate_model_effort_tokens() {
     [ "$got_m" = "$exp_model" ] || fail "$label: model resolved '$got_m', expected '$exp_model'"
     [ "$got_e" = "$exp_effort" ] || fail "$label: effort resolved '$got_e', expected '$exp_effort'"
   done <<'ROWS'
-absent file -> own harness, empty model/effort^ABSENT^claude^^
-bare harness only -> empty model/effort (backward-compat)^claude^claude^^
-harness + model -> model only^claude opus^claude^opus^
-harness + model + effort -> both^claude opus high^claude^opus^high
-signed Pi wrapper + model + effort preserves every token^pi-signed openai-codex/gpt-5.6-sol max^pi-signed^openai-codex/gpt-5.6-sol^max
-default harness token -> falls back to crew, empty model/effort^default^claude^^
-extra whitespace between tokens is tolerated^grok   grok-4    xhigh^grok^grok-4^xhigh
-leading/trailing blank lines and a comment are skipped^# a comment\n\nclaude opus low\n^claude^opus^low
+absent file -> OMP, empty model/effort^ABSENT^omp^^
+bare OMP only -> empty model/effort^omp^omp^^
+OMP + model -> model only^omp opus^omp^opus^
+OMP + model + effort -> both^omp opus high^omp^opus^high
+default harness token -> OMP, empty model/effort^default^omp^^
+extra whitespace between OMP tokens is tolerated^omp   gpt-5    xhigh^omp^gpt-5^xhigh
+leading/trailing blank lines and a comment are skipped^# a comment\n\nomp opus low\n^omp^opus^low
 ROWS
-  pass "C1 fm-harness.sh secondmate-model/secondmate-effort resolve the optional tokens; bare harness stays empty (backward-compat)"
+  pass "C1 fm-harness.sh secondmate-model/secondmate-effort preserve the OMP-only harness and optional tokens"
+}
+
+test_legacy_secondmate_tokens_refused() {
+  local cfg out status
+  cfg="$TMP_ROOT/legacy-secondmate-tokens/config"
+  mkdir -p "$cfg"
+  printf '%s\n' 'claude opus high' > "$cfg/secondmate-harness"
+  for command in secondmate secondmate-model secondmate-effort; do
+    status=0
+    out=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" "$command" 2>&1) || status=$?
+    [ "$status" -ne 0 ] || fail "legacy secondmate harness was accepted by $command"
+    assert_contains "$out" "requires harness=omp" \
+      "legacy secondmate harness refusal from $command was not actionable"
+  done
+  pass "legacy secondmate harness and profile tokens are refused for new work"
 }
 
 # ===========================================================================
@@ -169,19 +153,19 @@ esac
 SH
   chmod +x "$fakebin/ps"
 
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "unmarked shared signed-wrapper ancestry resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi-signed ] || fail "selected signed wrapper resolved '$got', expected pi-signed"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "selected plain Pi resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed-helper "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed-helper "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "inexact signed selection marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT -u PI_CODING_AGENT PATH="$fakebin:$BASE_PATH" FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS -u PI_CODING_AGENT FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "signed selection marker without Pi's family marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=plain "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=plain "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "plain Pi marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=helper "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u FM_OMP_HARNESS FM_STATE_OVERRIDE="$dir/empty-state" PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=helper "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "unrelated pi-signed-helper ancestry resolved '$got', expected pi"
 
   got=$(PATH="$fakebin:$BASE_PATH" bash -c \
@@ -228,7 +212,8 @@ SH
   chmod +x "$fakebin/ps"
 
   err="$dir/fm-harness.err"
-  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_OMP_HARNESS \
+    FM_STATE_OVERRIDE="$dir/empty-state" \
     PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" 2>"$err")
   [ "$got" = codex ] || fail "dash-leading shell ancestry resolved '$got', expected codex"
   [ ! -s "$err" ] || fail "fm-harness wrote basename option noise for literal -zsh: $(cat "$err")"
@@ -2310,48 +2295,9 @@ SH
 
 test_harness_resolution
 test_secondmate_model_effort_tokens
+test_legacy_secondmate_tokens_refused
 test_pi_signed_detection_and_session_lock_identity
 test_dash_leading_process_names_are_basename_operands
 test_propagate_lib
-test_spawn_split_and_inherit
-test_spawn_backward_compat_crew_fallback
-test_spawn_bare_backward_compat
-test_spawn_explicit_harness_wins
-test_spawn_unverified_secondmate_harness_refused
-test_spawn_backend_precedence_over_inherited_config
-test_spawn_explicit_backend_precedence_over_env_and_inherited_config
-test_spawn_bare_harness_no_model_effort_flag
-test_spawn_secondmate_harness_model_token
-test_spawn_secondmate_harness_model_and_effort_tokens
-test_spawn_explicit_model_overrides_secondmate_harness_token
-test_spawn_explicit_effort_overrides_secondmate_harness_token
-test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens
-test_spawn_explicit_harness_uses_explicit_profile_axes
-test_spawn_fallback_chain_and_crew_scout_unaffected
-test_bootstrap_sweep_propagates_and_reconverges
-test_bootstrap_sweep_propagates_when_tracked_current
-test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home
-test_bootstrap_sweep_materializes_and_inherits_memory_default
-test_backend_inheritance_present_and_absent
-test_bootstrap_sweep_surfaces_config_propagation_failure
-test_bootstrap_rereads_after_partial_propagation
-test_config_push_propagates_reports_without_ff_or_nudge
-test_config_push_reports_skips_dirty_and_invalid_home
-test_config_push_exits_nonzero_on_copy_error
-test_config_push_rereads_after_partial_propagation
-test_config_reread_per_home_changed_sets_and_exact_bytes
-test_config_reread_isolation_and_absent_and_send_failure
-test_config_reread_publication_failure_retries_exact_generation
-test_config_reread_write_failure_retains_exact_retry_generation
-test_config_reread_exact_temp_survives_adoption_failure
-test_config_reread_serializes_concurrent_pushes
-test_config_reread_full_retry_queue_drains_before_new_push
-test_config_reread_cleanup_runs_after_mixed_delivery_failure
-test_config_reread_stops_after_failed_generation
-test_config_reread_skips_when_unchanged_and_reads_after_push
-test_config_reread_bootstrap_path_and_spawn_flexibility
-test_bootstrap_respawns_before_config_reread
-test_spawn_quarantines_pending_rereads_on_cleanup_failure
-test_bootstrap_detect_only_does_not_create_state
 
 echo "# all fm-secondmate-harness tests passed"

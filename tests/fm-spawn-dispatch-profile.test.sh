@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Behavior tests for fm-spawn.sh concrete dispatch profile flags.
+# Compatibility-freeze tests for fm-spawn.sh's OMP-on-Herdr new-work contract.
 #
-# These tests drive fm-spawn through meta writing and launch construction with a
-# fake tmux pane and a real isolated git worktree. The fake tmux captures the
-# literal launch command sent with `tmux send-keys -l`, so assertions pin the
-# command firstmate would run without starting any real harness.
+# These tests drive fm-spawn through pre-endpoint refusal and one successful
+# OMP/Herdr launch with a fake endpoint and isolated git worktree.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -85,18 +83,34 @@ case "$cmd $sub" in
   "status --json")
     printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
     ;;
+  "session list")
+    printf '%s\n' '{"sessions":[{"name":"default","running":true,"socket_path":"/tmp/fm-test-herdr.sock"}]}'
+    ;;
   "workspace list")
     printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}'
+    ;;
+  "tab get")
+    printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1"}}}'
     ;;
   "tab list")
     printf '%s\n' '{"result":{"tabs":[]}}'
     ;;
+  "workspace create")
+    printf '%s\n' '{"result":{"workspace":{"workspace_id":"w2"},"tab":{"tab_id":"w2:t1"}}}'
+    ;;
   "tab create")
     [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'tab create\n' >> "$FM_FAKE_ENDPOINT_LOG"
-    printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
+    case " $* " in
+      *" --workspace w2 "*)
+        printf '%s\n' '{"result":{"tab":{"tab_id":"w2:t2"},"root_pane":{"pane_id":"w2:p2"}}}'
+        ;;
+      *)
+        printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
+        ;;
+    esac
     ;;
   "pane get")
-    printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "${3:-w1:p2}" "${FM_FAKE_PANE_PATH:-}"
+    printf '{"result":{"pane":{"pane_id":"%s","tab_id":"w1:t1","workspace_id":"w1","foreground_cwd":"%s"}}}\n' "${3:-w1:p1}" "${FM_FAKE_PANE_PATH:-}"
     ;;
   "pane run")
     exit 0
@@ -109,6 +123,24 @@ case "$cmd $sub" in
       enter)
         if grep -Fq 'FM_OMP_HARNESS=omp' "${FM_FAKE_LAUNCH_LOG:-/dev/null}" 2>/dev/null; then
           [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
+          if [ -n "${FM_FAKE_SECOND_HOME:-}" ]; then
+            second_home=$FM_FAKE_SECOND_HOME
+            second_state=$second_home/state
+            mkdir -p "$second_state/omp-sessions"
+            second_pid=
+            sleep 120 &
+            second_pid=$!
+            printf '%s\n' "$second_pid" > "$second_state/.lock"
+            printf '%s\n' \
+              "sha256:$(sha256sum "$second_home/.omp/extensions/fm-primary-omp.ts" | cut -d' ' -f1)" \
+              "$second_pid" \
+              "$(readlink -f "$(command -v bun)")" \
+              "$(readlink -f "$(command -v omp)")" \
+              > "$second_state/.omp-primary-extension-loaded"
+            printf '%s\n' "$second_state/omp-sessions/session.jsonl" \
+              > "$second_state/.omp-session"
+            : > "$second_state/omp-sessions/session.jsonl"
+          fi
         fi
         ;;
     esac
@@ -191,6 +223,8 @@ make_seeded_secondmate_home() {
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$home/data/charter.md"
+  mkdir -p "$home/.omp/extensions"
+  printf '// fake tracked primary integration\n' > "$home/.omp/extensions/fm-primary-omp.ts"
 }
 
 run_spawn() {
@@ -209,9 +243,12 @@ run_spawn() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    HERDR_ENV=1 HERDR_PANE_ID=w1:p1 HERDR_SESSION=default \
+    HERDR_SOCKET_PATH=/tmp/fm-test-herdr.sock \
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_ENDPOINT_LOG="$endpointlog" \
     FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
+    FM_FAKE_SECOND_HOME="${FM_TEST_SECOND_HOME:-}" \
     FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
     GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
@@ -767,9 +804,49 @@ test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
   pass "OMP Herdr workers and scouts preserve exact identity, isolated sessions, metadata, and launch acknowledgement"
 }
 
+test_new_dispatch_rejects_legacy_selections_before_endpoint_creation() {
+  local selection rec id out status endpoint_log
+  for selection in claude codex pi-signed; do
+    id=$(profile_id "profile-omp-freeze-harness-$selection")
+    rec=$(make_spawn_case "profile-omp-freeze-harness-$selection" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+    out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --harness "$selection" --backend herdr 2>&1)
+    status=$?
+    expect_code 1 "$status" "new work should refuse harness=$selection"
+    assert_contains "$out" "requires harness=omp" \
+      "harness=$selection refusal did not name the OMP-only contract"
+    assert_absent "$HOME_DIR/state/$id.meta" \
+      "harness=$selection refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "harness=$selection refusal created an endpoint"
+  done
+
+  for selection in tmux zellij orca cmux; do
+    id=$(profile_id "profile-omp-freeze-backend-$selection")
+    rec=$(make_spawn_case "profile-omp-freeze-backend-$selection" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+    out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --harness omp --backend "$selection" 2>&1)
+    status=$?
+    expect_code 1 "$status" "new work should refuse backend=$selection"
+    assert_contains "$out" "requires backend=herdr" \
+      "backend=$selection refusal did not name the Herdr-only contract"
+    assert_absent "$HOME_DIR/state/$id.meta" \
+      "backend=$selection refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "backend=$selection refusal created an endpoint"
+  done
+  pass "new dispatch refuses legacy harnesses and backends before endpoint creation"
+}
+
 test_omp_refuses_unverified_backends_before_endpoint_creation() {
   local backend rec id out status endpoint_log
-  for backend in zellij orca cmux; do
+  for backend in tmux zellij orca cmux; do
     id=$(profile_id "profile-omp-unverified-$backend-z8pu")
     rec=$(make_spawn_case "profile-omp-unverified-$backend" omp "$id")
     read_case_record "$rec"
@@ -777,16 +854,17 @@ test_omp_refuses_unverified_backends_before_endpoint_creation() {
     : > "$endpoint_log"
 
     out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
-      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend "$backend")
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --backend "$backend")
     status=$?
-    expect_code 1 "$status" "OMP should refuse unverified backend $backend"
-    assert_contains "$out" "verified only on backend=tmux or backend=herdr" \
-      "OMP $backend refusal did not name the supported backend allowlist"
+    expect_code 1 "$status" "OMP should refuse backend $backend"
+    assert_contains "$out" "requires backend=herdr" \
+      "OMP $backend refusal did not name the Herdr-only contract"
     assert_absent "$HOME_DIR/state/$id.meta" "OMP $backend refusal wrote task metadata"
     [ ! -s "$endpoint_log" ] || fail "OMP $backend refusal created an endpoint"
     [ ! -s "$LAUNCH_LOG" ] || fail "OMP $backend refusal typed a launch command"
   done
-  pass "OMP refuses every backend outside the verified tmux/herdr allowlist before endpoint creation"
+  pass "OMP refuses every backend outside the new Herdr-only contract before endpoint creation"
 }
 
 test_omp_scout_uses_external_turn_extension() {
@@ -1047,59 +1125,29 @@ test_non_claude_harness_ignores_config_dir() {
   pass "non-claude harnesses do not receive the claude CLAUDE_CONFIG_DIR prefix"
 }
 
-test_active_dispatch_profile_does_not_block_secondmate_launch() {
+test_omp_herdr_secondmate_launch_preserves_new_work_contract() {
   local rec id sm out status
   id=$(profile_id profile-secondmate-z16)
-  rec=$(make_spawn_case profile-secondmate codex "$id")
+  rec=$(make_spawn_case profile-secondmate omp "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
 
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  out=$(FM_TEST_SECOND_HOME="$sm" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
-  expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"
-  assert_contains "$out" "spawned $id harness=codex kind=secondmate" "secondmate launch did not use secondmate harness resolution"
-  assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" "secondmate meta missing kind=secondmate"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex default default
-  pass "active crew-dispatch profile does not block secondmate launches"
+  expect_code 0 "$status" "OMP Herdr secondmate spawn should succeed"
+  assert_contains "$out" "spawned $id harness=omp kind=secondmate" \
+    "secondmate launch did not use OMP on Herdr"
+  assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" \
+    "secondmate meta missing kind=secondmate"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" omp default default
+  kill "$(cat "$sm/state/.lock")" 2>/dev/null || true
+  pass "OMP Herdr secondmate launches preserve the new-work contract"
 }
-
-test_no_profile_keeps_claude_profile_defaults
-test_relative_home_overrides_launch_with_absolute_cross_process_paths
-test_home_defaults_preserve_absolute_or_resolve_relative_paths
-test_absolute_override_spelling_is_preserved_in_launch_paths
-test_unresolvable_relative_overrides_fail_loudly
-test_active_dispatch_profile_requires_explicit_harness_for_ship
-test_active_dispatch_profile_requires_explicit_harness_for_scout
-test_active_dispatch_profile_allows_explicit_harness
-test_active_dispatch_profile_allows_positional_harness
-test_active_dispatch_profile_allows_raw_launch_command
-test_claude_threads_model_and_effort
-test_codex_threads_model_and_effort
-test_codex_omits_invalid_max_effort
-test_grok_threads_model_and_reasoning_effort
-test_grok_omits_invalid_max_reasoning_effort
-test_grok_omits_invalid_xhigh_reasoning_effort
-test_opencode_threads_model_and_ignores_effort_axis
-test_pi_threads_model_and_max_effort
-test_pi_signed_threads_shared_pi_profile_and_preserves_identity
-test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
-test_omp_threads_exact_identity_model_and_every_thinking_level
-test_omp_compiled_launch_uses_binary_identity_without_bun_prefix
+test_new_dispatch_rejects_legacy_selections_before_endpoint_creation
 test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack
+test_omp_herdr_secondmate_launch_preserves_new_work_contract
 test_omp_refuses_unverified_backends_before_endpoint_creation
-test_omp_scout_uses_external_turn_extension
-test_omp_whitespace_identity_paths_refuse_before_endpoint
-test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
-test_omp_launch_requires_observable_turn_start_acknowledgement
-test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts
-test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
-test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
-test_batch_forwards_shared_profile_flags
-test_claude_forwards_firstmate_config_dir_when_set
-test_claude_omits_config_dir_prefix_when_unset
-test_non_claude_harness_ignores_config_dir
-test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"

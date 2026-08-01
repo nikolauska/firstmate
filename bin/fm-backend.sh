@@ -5,39 +5,22 @@
 #
 # Design: data/fm-backend-design-d7/report.md ("Backend Interface") and
 # data/fm-backend-design-d7/herdr-addendum.md ("Events as the core
-# abstraction"). P1 extracted the tmux command sequences that fm-send.sh,
-# fm-peek.sh, fm-watch.sh, fm-spawn.sh, and fm-teardown.sh already ran inline
-# into bin/backends/tmux.sh, with those SAME command sequences, so the
-# compatibility fallback (tmux) path stays byte-identical. P2 adds
-# bin/backends/herdr.sh, an EXPERIMENTAL spawn-capable backend behind
-# `--backend herdr`/`FM_BACKEND=herdr`/`config/backend`, and behind runtime
-# auto-detection when firstmate itself is running inside herdr with no explicit
-# backend setting; see herdr-addendum.md and
-# data/fm-backend-design-d7/herdr-verification-p2.md for its empirical basis.
+# abstraction") define the adapter seam and its compatibility boundaries.
+# The adapter set remains for active-session compatibility. New ship, scout, and
+# secondmate work accepts only Herdr through fm_backend_validate_new_work; the
+# retained adapters remain available to inspect, recover, clean up, or safely
+# refuse records created before this freeze. The Herdr endpoint contract and its
+# event-wait edge remain unchanged in this slice.
 #
-# P3 adds bin/backends/zellij.sh, also EXPERIMENTAL and spawn-capable, behind
-# `--backend zellij`/`FM_BACKEND=zellij`/`config/backend` - NOT behind runtime
-# auto-detection (report.md's Open Question #2: start with a dedicated
-# background session for predictability, unlike tmux's/herdr's ambient-session
-# reuse); see report.md's "Zellij Backend" section and docs/zellij-backend.md
-# for its empirical basis. P4 makes Orca spawn-capable: Orca owns both the
-# task worktree and the terminal endpoint. P5 adds bin/backends/cmux.sh, also
-# EXPERIMENTAL and spawn-capable, behind `--backend cmux`/`FM_BACKEND=cmux`/
-# `config/backend`, and behind runtime auto-detection when firstmate itself is
-# running inside a cmux-spawned terminal (primary CMUX_WORKSPACE_ID marker, or
-# the documented macOS fallback signals when cmux's claude wrapper strips that
-# marker) with no explicit backend setting - unlike Orca, which stays
-# never-auto-detected because it also owns the task worktree; see
-# docs/cmux-backend.md for its empirical basis.
 # Codex App is intentionally not in the known set yet.
 # docs/codex-app-backend.md owns that blocked backend contract.
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
-# treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
-# `backend=tmux` for a compatibility-path task, so existing and newly spawned
-# compatibility-path metas stay byte-identical.
-# Only a task spawned on a non-tmux spawn-capable backend, currently
-# experimental herdr, zellij, orca, or cmux, carries an explicit `backend=` line.
+# treats that as `tmux` (fm_backend_of_meta), and new work never rewrites such
+# metadata as Herdr. Existing and newly spawned compatibility-path metas stay
+# byte-identical.
+# New task metadata carries explicit `backend=herdr` plus the Herdr endpoint
+# identity fields.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -59,18 +42,14 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$FM_BACKEND_LIB_DIR/fm-omp-process-lib.sh"
 
-# Verified backend adapters. Extend only after a backend gets its own
+# Backend adapters retained for active-session compatibility. Herdr is the only
+# backend accepted for NEW ship, scout, and secondmate work by
+# fm_backend_validate_new_work; the other adapters remain available to inspect,
+# recover, clean up, or safely refuse metadata created before this freeze.
+# Extend this set only after an adapter gets its own
 # bin/backends/<name>.sh and empirical verification, mirroring AGENTS.md
-# section 4's harness-verification discipline. herdr is EXPERIMENTAL (P2;
-# data/fm-backend-design-d7/herdr-addendum.md) - verified against the real
-# v0.7.1/protocol-14 binary (data/fm-backend-design-d7/herdr-verification-p2.md)
-# but newer than tmux's long-proven default path. zellij is EXPERIMENTAL (P3;
-# data/fm-backend-design-d7/report.md "Zellij Backend") - verified against the
-# real 0.44.0 binary (docs/zellij-backend.md). orca is EXPERIMENTAL and
-# spawn-capable; unlike tmux/herdr/zellij it is also the worktree provider.
-# cmux is EXPERIMENTAL and spawn-capable, session-provider-only like
-# herdr/zellij - verified against the real 0.64.17 binary (docs/cmux-backend.md).
-# codex-app remains deliberately absent; see docs/codex-app-backend.md.
+# section 4's harness-verification discipline. Herdr's endpoint semantics and
+# event-wait edge remain intentionally unchanged in this slice.
 FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
 FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
 
@@ -232,21 +211,12 @@ fm_backend_detect_cmux_app_is_ancestor() {
   return 1
 }
 
-# fm_backend_name: resolve the ACTIVE backend for a NEW spawn, absent an
-# explicit per-task override. Precedence: FM_BACKEND env, then config/backend
-# (a single word on its first non-empty line, mirroring config/crew-harness),
-# then runtime auto-detection (fm_backend_detect), then the tmux compatibility
-# fallback. A per-task `--backend` flag is parsed by the caller (fm-spawn.sh)
-# and takes precedence over this resolution entirely; it is not read here.
-# Auto-detect fires only when nothing is explicitly configured, so an explicit
-# setting always wins. When no explicit per-task, environment, or config backend
-# selection exists, Firstmate passes explicit `--backend herdr` for new work
-# and uses tmux only for a concrete Herdr issue. Selecting herdr or cmux via
-# auto-detect prints one loud stderr notice (both are experimental);
-# auto-detecting tmux stays silent as the compatibility fallback.
-# The cmux notice names the winning signal, so a fallback-detected cmux (bundle
-# id or ancestry, after the claude wrapper stripped CMUX_WORKSPACE_ID) is
-# visibly distinct from the primary-marker case.
+# fm_backend_name: resolve the ACTIVE backend for current-session tooling and
+# compatibility paths. It preserves explicit settings, runtime detection, and
+# the absent-field tmux fallback so old metadata can still be inspected,
+# recovered, or cleaned up without reinterpretation.
+# New task dispatches use fm_backend_new_work_name and
+# fm_backend_validate_new_work instead.
 fm_backend_name() {
   local line v detected marker
   if [ -n "${FM_BACKEND:-}" ]; then
@@ -281,6 +251,38 @@ fm_backend_name() {
     return 0
   fi
   printf 'tmux'
+}
+
+# Resolve the runtime backend for NEW work. Explicit environment and config
+# values remain authoritative so unsupported selections can be refused; ambient
+# runtime detection is intentionally not consulted and the default is Herdr.
+fm_backend_new_work_name() {
+  local line v
+  if [ -n "${FM_BACKEND:-}" ]; then
+    printf '%s' "$FM_BACKEND"
+    return 0
+  fi
+  if [ -f "$FM_BACKEND_CONFIG_DIR/backend" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      v=$(printf '%s' "$line" | tr -d '[:space:]')
+      if [ -n "$v" ]; then
+        printf '%s' "$v"
+        return 0
+      fi
+    done < "$FM_BACKEND_CONFIG_DIR/backend"
+  fi
+  printf 'herdr'
+}
+
+# Refuse every non-Herdr backend for new work without changing legacy metadata
+# readers, which still dispatch through the recorded backend identity.
+fm_backend_validate_new_work() {
+  local name=$1
+  if [ "$name" != herdr ]; then
+    echo "error: new work requires backend=herdr; selected backend='$name'. Existing legacy records remain readable but are not reused for new work." >&2
+    return 1
+  fi
+  fm_backend_validate_spawn "$name"
 }
 
 # fm_backend_validate: refuse an unknown backend LOUDLY. Silent on success.

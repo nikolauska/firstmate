@@ -106,6 +106,44 @@ test_capability_probe_never_falls_back_when_omp_is_missing() {
   pass "selected OMP refuses instead of falling back to another harness"
 }
 
+test_new_work_harness_resolution_is_omp_only() {
+  local config out status legacy
+  config="$TMP_ROOT/new-work-harness-config"
+  mkdir -p "$config"
+
+  out=$(FM_CONFIG_OVERRIDE="$config" "$ROOT/bin/fm-harness.sh" crew)
+  [ "$out" = omp ] || fail "absent crew-harness should resolve new work to OMP, got '$out'"
+  out=$(FM_CONFIG_OVERRIDE="$config" "$ROOT/bin/fm-harness.sh" secondmate)
+  [ "$out" = omp ] || fail "absent secondmate-harness should resolve new work to OMP, got '$out'"
+
+  printf '%s\n' default > "$config/crew-harness"
+  out=$(FM_CONFIG_OVERRIDE="$config" "$ROOT/bin/fm-harness.sh" crew)
+  [ "$out" = omp ] || fail "default crew-harness should resolve new work to OMP, got '$out'"
+
+  for legacy in claude codex pi tmux; do
+    printf '%s\n' "$legacy" > "$config/crew-harness"
+    set +e
+    out=$(FM_CONFIG_OVERRIDE="$config" "$ROOT/bin/fm-harness.sh" crew 2>&1)
+    status=$?
+    set +e
+    [ "$status" -eq 1 ] || fail "legacy crew-harness '$legacy' should be refused"
+    assert_contains "$out" "requires harness=omp" \
+      "legacy crew-harness '$legacy' refusal was not actionable"
+  done
+
+  printf '%s\n' 'codex openai-codex/gpt-5 low' > "$config/secondmate-harness"
+  set +e
+  out=$(FM_CONFIG_OVERRIDE="$config" "$ROOT/bin/fm-harness.sh" secondmate 2>&1)
+  status=$?
+  set +e
+  [ "$status" -eq 1 ] || fail "legacy secondmate-harness should be refused"
+  assert_contains "$out" "requires harness=omp" \
+    "legacy secondmate-harness refusal was not actionable"
+  pass "new ship, scout, and secondmate harness resolution is OMP-only while legacy values are refused"
+}
+
+test_new_work_harness_resolution_is_omp_only
+
 test_launch_boundary_marker_preserves_exact_omp_identity
 test_capability_probe_accepts_required_surface
 test_capability_probe_accepts_compiled_entrypoint

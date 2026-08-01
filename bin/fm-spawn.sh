@@ -1,132 +1,23 @@
 #!/usr/bin/env bash
-# Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
-# secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
-#   --harness <name> is the explicit per-spawn harness/profile adapter. The old
-#   positional harness arg still works for back-compat.
-#   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
-#   axes chosen by firstmate at intake. They are only threaded into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
-#   --backend <name> is the explicit runtime session-provider backend for this
-#   spawn. Without it, the script resolves FM_BACKEND, then config/backend, then
-#   runtime auto-detection (the runtime firstmate itself is executing inside -
-#   $TMUX, HERDR_ENV=1, or cmux runtime signals; bin/fm-backend.sh's
-#   fm_backend_detect, with cmux fallback details in docs/cmux-backend.md),
-#   then the tmux compatibility fallback.
-#   Spawn-capable backends are the reference tmux adapter and experimental
-#   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
-#   terminal, so ship/scout Orca spawns do not run treehouse get; cmux is a
-#   session provider only, exactly like herdr/zellij, so it does. An
-#   auto-detected herdr or cmux spawn prints a loud stderr notice;
-#   auto-detected tmux stays silent; zellij and orca are never auto-detected.
-#   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
-#   compatibility tmux spawns do not write backend= to meta; absent backend=
-#   means tmux. cmux does not support --secondmate spawns yet.
-#   A backend spawn refusal (missing dependency, version gate, unauthenticated
-#   socket, or unsupported secondmate mode) is terminal for that selected backend;
-#   callers must surface it instead of silently retrying another backend.
-#   A herdr crewmate or scout is placed in the exact workspace of the firstmate
-#   or secondmate process launching it, resolved from that process's own herdr
-#   pane rather than from a workspace label (herdr enforces no label uniqueness,
-#   so a label cannot tell two "firstmate" workspaces apart). A claimed parent
-#   identity that is unreadable, contradictory, stale, or from another herdr
-#   session stops the spawn before any worker endpoint exists. A launcher
-#   outside herdr has no workspace to inherit and uses this home's own labeled
-#   workspace, which must then match exactly one. --secondmate is the deliberate
-#   exception: it stands up that secondmate home's own workspace.
-#   Herdr additionally supports a default-off presentation-only layout when the
-#   local config/herdr-presentation-spaces flag exists. A clean fresh task first
-#   writes state/<id>.herdr-presentation atomically, then creates a disposable
-#   workspace containing only the ordinary task pane. A successful clean create
-#   upgrades its attempt journal with exact home, session, workspace, tab, pane,
-#   parent, and label bindings. On a same-identity restart, that complete binding
-#   plus authoritative metadata may replace one exact agent-free husk in place.
-#   The journal, visible token, and labels alone are never endpoint or ownership
-#   authority, and every ambiguous recovery stays on the flat fallback after
-#   duplicate-agent risk is independently absent. Treehouse allocation and task
-#   metadata are unchanged.
-#   A clean projected create or exact resume makes one bounded attempt to hold
-#   the one session-scoped presentation-order lock (keyed by named session plus
-#   canonical socket, outside any home's state/) through launch handoff. Lock
-#   contention warns and falls back to the ordinary flat layout before any
-#   projection mutation. The exact response-derived new workspace is inserted
-#   immediately after its owning parent (firstmate or 2ndmate-<id>) contiguous
-#   child block. Ordering never authorizes lifecycle cleanup, and any
-#   unavailable, ambiguous, or failed move warns while the spawn continues.
-#   Every projected create, prune, and move captures and verifies the named
-#   session's exact active workspace and tab. A detected focus change restores
-#   only that exact tab id; an ambiguous pre-operation snapshot refuses the
-#   focus-sensitive presentation mutation.
-#   Every single-task invocation holds one task-id-scoped lock across backend
-#   creation through metadata publication, so concurrent same-id spawns serialize
-#   even when they select different backends.
-#   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
-#   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
-#   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
-#   harness (config/secondmate-harness -> config/crew-harness -> own), so the
-#   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|omp|grok|kimi)
-#   overrides it for this spawn (either kind). A non-flag string containing
-#   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. pi-signed launches that exact executable name from PATH and
-#   refuses before endpoint creation when it is unavailable; it never falls back to pi.
-#   omp resolves its exact executable and checks its required launch/recovery
-#   capabilities before endpoint creation; it never falls back to pi or another harness.
-#   config/secondmate-harness may also carry an optional model and effort as extra
-#   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
-#   --secondmate spawn, those tokens apply only when this spawn also resolves its
-#   harness from config/secondmate-harness. An explicit per-spawn --harness,
-#   positional harness arg, or raw launch command starts with clean model/effort
-#   defaults unless the caller also passes explicit --model/--effort flags. When
-#   the file governs the spawn, its model/effort tokens are re-resolved on every
-#   respawn exactly like the harness axis, and explicit --model/--effort flags
-#   still win over the file's tokens.
-#   A --secondmate spawn also propagates the primary's declared inherited local
-#   material, so the secondmate's OWN crewmates inherit primary config and the
-#   secondmate receives the primary's read-only shared captain-preference file
-#   (fm-config-inherit-lib.sh). A successful launch clears pending inherited
-#   config reread generations because the new agent reads the converged files.
-#   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
-#   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
-#   provisioned firstmate home; the default is kind=ship.
-#   Before a secondmate launch, the home is locally fast-forwarded to the primary
-#   default-branch commit when safe; skipped syncs warn and launch unchanged.
-#   Ship/scout spawns refuse to launch unless the resolved task path is a real
-#   git worktree root distinct from the primary project checkout.
-# Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
-#     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
-#   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend applies to every pair.
-#   If config/crew-dispatch.json exists, shared --harness is required for crewmate
-#   and scout batches. The loop lives here, in bash, so callers never hand-write a
-#   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted
-#   $vars and silently breaks ad-hoc `for ... in $pairs` loops).
-#   Launch templates live in launch_template() below; placeholders replaced before launch:
-#     __BRIEF__    absolute path to data/<task-id>/brief.md
-#     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
-#                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
-#     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
-#                  written by this script; outside the worktree to avoid pi's trust gate)
-#     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (OMP turn-start
-#                  acknowledgement and turn-end extension, also outside the worktree)
-#     __OMP_LAUNCH__ quoted OMP executable, or Bun plus the script entrypoint
-#     __OMPSESSIONDIR__ task-local or secondmate-home OMP session directory for exact resume
-#     __OMPRESUMEFLAG__ empty for a fresh OMP launch or the exact retained secondmate session file
-#     __OMPPRIMARY__ absolute path to .omp/extensions/fm-primary-omp.ts in an OMP secondmate home
-#     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
-#     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
-#     __OPINPUT__   absolute path to the canonical operational-input encoder
-# Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
-# Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
-# a firstmate-owned global hook and registry, and a gitignored per-task pointer.
-# grok uses a firstmate-owned global hook under ${GROK_HOME:-$HOME/.grok}/hooks
-# plus a gitignored .fm-grok-turnend worktree pointer and a state token.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
-# mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
-# secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
+# Spawn a direct report in an isolated worktree or a persistent secondmate
+# home.
+# Usage: fm-spawn.sh <task-id> <project-dir> [--harness omp] [--model <name>] [--effort <level>] [--backend herdr] [--scout]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness omp] [--model <name>] [--effort <level>] [--backend herdr] --secondmate
+# New ship, scout, and secondmate dispatches use only OMP on Herdr.
+# Explicit non-OMP harnesses, non-Herdr backends, and raw launch commands are
+# refused before endpoint creation.
+# Existing metadata remains readable through its recorded harness and backend
+# adapters for inspection, recovery, cleanup, or a safe refusal.
+# OMP launch capability checks, isolated session directories, exact metadata
+# identity, Herdr endpoint semantics, and Treehouse worktree ownership remain
+# unchanged.
+# Model and effort are concrete profile axes chosen by firstmate at intake.
+# They are threaded into OMP only after capability checks.
+# --scout records kind=scout; --secondmate records kind=secondmate.
+# The default is kind=ship.
+# Batch dispatch accepts one or more id=repo pairs and forwards the same OMP
+# and Herdr selections to each single-task invocation.
+# On success prints: spawned <id> harness=omp kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<herdr-target> worktree=<path>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -241,22 +132,15 @@ case "$EFFORT" in
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
 
-# Backend selection (data/fm-backend-design-d7): explicit --backend, else
-# FM_BACKEND env, else config/backend, else runtime auto-detection, else the
-# tmux compatibility fallback (fm_backend_name). When no explicit per-task,
-# environment, or config backend selection exists, Firstmate passes explicit
-# --backend herdr for new work and uses tmux only for a concrete Herdr issue.
-# fm_backend_validate_spawn refuses unknown or non-spawn-capable backends. The
-# resolved value is recorded in meta only when it is NOT tmux
-# (fm-teardown.sh and fm-watch.sh's window_backend/fm_backend_of_meta already
-# treat an absent backend= as tmux), so the compatibility path's meta stays
-# byte-identical.
+# New ship, scout, and secondmate dispatches are fixed to Herdr. Explicit
+# per-task, environment, or config selections remain visible and are refused
+# rather than falling back to an ambient or legacy backend.
 if [ "$BACKEND_SET" -eq 1 ]; then
   BACKEND=$BACKEND_ARG
 else
-  BACKEND=$(fm_backend_name)
+  BACKEND=$(fm_backend_new_work_name)
 fi
-fm_backend_validate_spawn "$BACKEND" || exit 1
+fm_backend_validate_new_work "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
 if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=orca does not support --secondmate spawns yet" >&2
@@ -559,53 +443,35 @@ launch_template() {
 }
 
 case "$ARG3" in
-  *' '*)  # raw launch command (unverified-adapter escape hatch)
-    LAUNCH=$ARG3
-    HARNESS=""
-    for word in $LAUNCH; do
-      case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
-    done
+  *' '*)
+    echo "error: new work requires harness=omp; raw launch commands are not supported. Existing legacy records remain readable but are not reused for new work." >&2
+    exit 1
     ;;
   '')
-    # No explicit harness: resolve from config. A secondmate AGENT launches on the
-    # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
-    # every other kind uses the crew harness only when no dispatch profile file is
-    # active. Resolving here on every spawn is what makes the split DURABLE - a
-    # respawn (recovery, /updatefirstmate, restart) re-resolves, so
-    # config/secondmate-harness keeps governing secondmate launches across restarts.
-    # The launch_template lookup below is the unverified-adapter guard for both
-    # kinds: a harness with no template aborts the spawn.
     if [ "$KIND" = secondmate ]; then
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
-      harness_src='config/secondmate-harness (falling back to config/crew-harness)'
     else
       if [ -f "$CONFIG/crew-dispatch.json" ]; then
         echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
         exit 1
       fi
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
-      harness_src='config/crew-harness'
     fi
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
   *)
     HARNESS=$ARG3
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
 esac
-
-case "$HARNESS" in
-  pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
-  omp) LAUNCH="FM_OMP_HARNESS=omp $LAUNCH" ;;
-esac
-
-# pi-signed is an explicitly selected executable identity, not an alias that may
-# silently fall back to pi. Resolve it from PATH before creating an endpoint and
-# retain the literal name in the launch command and task metadata.
-if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
-  echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
+if [ "$HARNESS" != omp ]; then
+  echo "error: new work requires harness=omp; selected harness='$HARNESS'. Existing legacy records remain readable but are not reused for new work." >&2
   exit 1
 fi
+LAUNCH=$(launch_template omp "$KIND") || {
+  echo "error: OMP launch template is unavailable" >&2
+  exit 1
+}
+
+LAUNCH="FM_OMP_HARNESS=omp $LAUNCH"
 OMP_BIN=
 OMP_BIN_CANON=
 OMP_BUN_CANON=
@@ -615,18 +481,6 @@ OMP_SESSION_POINTER=
 OMP_RESUME_FILE=
 OMP_SECONDMATE_RELAUNCH=0
 OMP_SECONDMATE_PRIOR_STATE=fresh
-if [ "$HARNESS" = omp ]; then
-  case "$BACKEND" in
-    tmux|herdr) ;;
-    *)
-      echo "error: harness=omp support is verified only on backend=tmux or backend=herdr (selected backend=$BACKEND)" >&2
-      exit 1
-      ;;
-  esac
-fi
-if [ "$BACKEND" = orca ]; then
-  fm_backend_orca_runtime_check || exit 1
-fi
 if [ "$HARNESS" = omp ]; then
   OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
   OMP_BIN_CANON=$(fm_omp_process_resolve_path "$OMP_BIN") || {
@@ -1928,10 +1782,10 @@ META_WINDOW=$T
     echo "omp_bin=$OMP_BIN_CANON"
     echo "omp_bun=$OMP_BUN_CANON"
   fi
-  # backend= is written only for a non-default (non-tmux) backend, so the
-  # default path's meta stays byte-identical (absent backend= means tmux;
-  # data/fm-backend-design-d7's P1 compatibility contract).
-  [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+  # New work is Herdr-only, so every new record names backend=herdr explicitly.
+  # Readers still interpret an absent field as legacy tmux; this writer never
+  # rewrites an existing record.
+  echo "backend=$BACKEND"
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"

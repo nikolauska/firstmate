@@ -48,32 +48,17 @@ The file format is unchanged in both modes; tasks-axi and manual edits produce t
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
-For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
-`tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr`, `zellij`, `orca`, and `cmux` are experimental spawn backends (see [`docs/herdr-backend.md`](herdr-backend.md), [`docs/zellij-backend.md`](zellij-backend.md), [`docs/orca-backend.md`](orca-backend.md), and [`docs/cmux-backend.md`](cmux-backend.md)).
-Treehouse remains the worktree provider for tmux, herdr, zellij, and cmux, since herdr, zellij, and cmux are session providers only; Orca provides both the task worktree and terminal endpoint.
-New spawns resolve the backend in this order: an explicit `--backend` flag firstmate passes when it spawns a task, then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX`, `HERDR_ENV=1`, or cmux runtime signals, then the tmux compatibility fallback.
-For new work with no explicit per-task, environment, or config backend selection, firstmate passes explicit `--backend herdr` and uses tmux only for a concrete Herdr issue.
-If more than one runtime marker is present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`, which is checked before cmux's primary `CMUX_WORKSPACE_ID` marker and its documented fallback signals - tmux or herdr started from inside a cmux terminal is the innermost, currently-executing layer, while cmux itself (a terminal application, not a nestable multiplexer) is always checked last.
-See [`docs/cmux-backend.md`](cmux-backend.md#runtime-detection) for why cmux can be selected when `CMUX_WORKSPACE_ID` is absent.
-Auto-detected herdr or cmux prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve compatibility fallback behavior.
-Zellij and Orca are never auto-detected; select them by putting the name in a local `config/backend` file, by exporting `FM_BACKEND=<name>`, or by telling the first mate in chat.
-Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected until another adapter is implemented and verified.
-`fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `backend=orca` and `backend=cmux` both still refuse `--secondmate` until secondmate launch semantics are designed for each.
-`codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
+For new ship, scout, and secondmate dispatches, Herdr is the only runtime session-provider.
+The new-work resolver checks an explicit `--backend` flag, `FM_BACKEND`, and the first non-empty line of local gitignored `config/backend`; when none is present it selects Herdr without consulting ambient runtime markers.
+Any explicit value other than `herdr` is refused before endpoint creation rather than falling back to tmux or another adapter.
+Herdr remains a session provider, so Treehouse continues to own task worktrees.
+The Herdr adapter additionally version-gates the installed binary's protocol and requires `jq`, refusing an incompatible or missing installation.
+Existing task metadata remains readable through its recorded backend adapter during this compatibility slice.
+Metadata without `backend=` continues to mean tmux for legacy inspection, recovery, cleanup, and safe refusal; it is never rewritten as Herdr.
+New task metadata records `backend=herdr`, `endpoint_task_id=`, and the exact `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=` identities.
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
-A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
-A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
-A cmux spawn additionally version-gates against the installed `cmux` binary's version, requires `jq`, and requires the control socket to be reachable and accessible (see [`docs/cmux-backend.md`](cmux-backend.md) "Setup" for the one-time socket-access configuration this needs; Automation mode is the recommended socket control mode, with Password mode supported via `config/cmux-socket-password`), refusing loudly and non-retryably on a `cmuxOnly`/unauthenticated socket.
-A backend spawn refusal from a missing dependency, version gate, or unauthenticated socket is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
-Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
-Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
-An OMP task additionally records canonical `omp_bin=` and `omp_bun=` launch identities; [the tmux backend guide](tmux-backend.md#current-behavior-and-safety) owns their recovery and supported-path contract.
-A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
-A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
-An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
-A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
 Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
@@ -195,50 +180,30 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Harness support
 
-claude, codex, opencode, pi, pi-signed, omp, grok, and kimi are empirically verified harness identities for crewmate and secondmate launches on their documented backend combinations.
-OMP is verified as a primary, crewmate, scout, and secondmate runtime only on tmux and Herdr; Zellij, Orca, and cmux reject OMP before endpoint creation and carry no live OMP claim.
-[README requirements](../README.md#requirements) owns the complete set supported for the primary session.
-New harnesses get verified through a supervised trial task before joining the set.
-The verified adapter knowledge - each harness's busy-state source, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
-Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
-Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
-Kimi remains outside the primary turn-end guard integrations; [`docs/turnend-guard.md`](turnend-guard.md#compatibility-limits) owns its separate captain-approved crew wake hook.
-Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
-Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked Pi extensions, OMP uses its tracked native `.omp` extension, and OpenCode uses its TUI plugin.
-`config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
-When pi-signed is selected, Firstmate launches the executable named `pi-signed` from `PATH` with `FM_PI_HARNESS=pi-signed` and refuses the launch if it is unavailable rather than falling back to pi.
-Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
-OMP remains a separate `harness=omp` identity, must resolve an OMP executable with every required launch and resume capability, and never falls back to Pi or another executable.
-`fm-spawn.sh` additionally binds a canonical Bun runtime for OMP composer geometry, while compiled OMP executables launch directly.
-Its primary loaded marker contains adapter hash, owning PID, canonical Bun realpath, and canonical OMP entrypoint realpath; legacy two-line OMP markers cannot authorize recovery.
-A fresh plain checkout may create only its absent canonical `state/` directory during native extension startup, while state overrides and symlinked paths remain strict.
-When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
-`config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
+OMP is the only harness for new crewmate, scout, and secondmate dispatches.
+The older Claude, Codex, OpenCode, Pi, Grok, Kimi, and Pi-signed identities remain readable for existing metadata and safe recovery during this compatibility slice.
+The legacy adapter knowledge remains in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md), and its hook and supervision files are intentionally retained.
+`config/crew-harness` is a local, gitignored file containing the new-work harness value.
+Absent or `default` resolves to `omp`; any explicit non-OMP value is refused before endpoint creation.
+`config/secondmate-harness` uses the same OMP-only harness value and may carry optional model and effort tokens after it.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
-A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
-When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
-`fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
-An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
-An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
-When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
-The inherited-local-material contract is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates use the primary's dispatch profiles and static harness value.
-Those inherited values are defaults and rules only; `fm-spawn` still permits a consciously chosen explicit runtime outside the config.
+A bare `omp` line preserves the harness-only form with no model or effort launch flag.
+The optional model and effort tokens are exposed by `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort`.
+Explicit non-OMP harness arguments and raw launch commands are refused rather than silently falling back.
+OMP must resolve an executable with every required launch and resume capability, never falling back to another executable.
+`fm-spawn.sh` binds a canonical Bun runtime for script-backed OMP and launches compiled OMP executables directly.
+The primary OMP extension owns native lifecycle integration, while the durable shell startup, watcher, away-mode, project-delivery, X-mode, and recovery contracts remain unchanged.
+For OMP secondmate launches, `fm-spawn.sh` explicitly loads that home's `.omp/extensions/fm-primary-omp.ts`, keeps exact resume state under `state/omp-sessions`, and publishes `state/.omp-session` only after the adapter binds the selected conversation.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
-For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
-For Kimi crews, `fm-spawn.sh` runs `fm-kimi-turnend-hook.sh install`, drops a per-task `.fm-kimi-turnend` pointer in the worktree, and records the matching private registry token for teardown.
-Kimi continues to use the captain's normal Kimi home, including the existing config, skills, and memory; Firstmate does not create an isolated Kimi home.
-The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
-Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
-For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
-For OMP secondmate launches, it explicitly loads that home's `.omp/extensions/fm-primary-omp.ts`, keeps exact resume state under `state/omp-sessions`, and publishes `state/.omp-session` only after the adapter binds the selected conversation.
+The inherited-local-material contract remains owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates receive the primary's OMP-only static value and dispatch profile.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
-When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
-Batch spawns satisfy the same requirement with a shared `--harness`.
-Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+The shell scripts do not match those rules; firstmate chooses the best matching rule, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete OMP `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+Every selected profile must name `harness: "omp"`; a profile naming another harness is reported as invalid and cannot be selected around.
+When the file exists, crewmate and scout spawns still require an explicit resolved OMP harness so firstmate cannot silently skip dispatch-profile consultation.
+Secondmate spawns resolve OMP through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
 `AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the pace-aware profile-array selection procedure.
 
@@ -248,31 +213,29 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>" }
+        { "harness": "omp", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>" }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
   "default": [
-    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
+    { "harness": "omp", "model": "<optional model>", "effort": "<optional effort>" }
   ]
 }
 ```
 
 Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
-The single-object form stays fully backward-compatible, and every profile needs `harness`.
+The single-object form remains compatible with the existing schema, and every profile must use `harness: "omp"`.
 Profile `model` and `effort` fields and rule `why` are optional.
-An omitted model or effort means the selected harness uses its own default for that axis.
+An omitted model or effort means OMP uses its own default for that axis.
 Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
-If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
-If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
+If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to the OMP-only `config/crew-harness`.
+If a selected profile carries an effort value OMP does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid profile as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
-Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
-While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
-Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
+Valid files stay silent by default, while malformed JSON, an empty or malformed rule/default array, a non-OMP harness, or an invalid effort is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same OMP-only dispatch profile behavior.
 
 ## Toolchain
 
@@ -282,14 +245,13 @@ Required tools come in two parts: a universal toolchain every home needs regardl
 The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.31.2 or newer, gh-axi, chrome-devtools-axi, lavish-axi, compatible tasks-axi per "Backlog backend" above, and quota-axi v0.1.16 or newer.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
-The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
-That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`: the resolved backend's own session-provider CLI (`tmux`, `herdr`, `zellij`, `orca`, or `cmux`), `jq` for the JSON-emitting experimental adapters (`herdr`, `zellij`, `cmux`) whose spawn and liveness paths parse the backend's JSON output, and the `treehouse` worktree provider for every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`).
-Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI.
-An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead of silently dropping its dependency delta or falling back to tmux.
-Orca provides both the task worktree and terminal endpoint (see "Runtime backend" above), so `backend=orca` requires only `orca` on top of the universal toolchain and skips both `treehouse` and every other backend's session CLI.
-A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease upgrade check runs only for the backends that actually use treehouse.
+The per-backend delta is required for the backend selected by the new-work resolver, while the active-session compatibility resolver may still report a legacy backend for existing endpoints.
+For new work, the per-backend delta follows the explicit `FM_BACKEND` or `config/backend` selection and otherwise uses Herdr; ambient runtime markers do not change the new-work default.
+That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`, which still recognizes every retained adapter so legacy endpoints can be inspected and recovered.
+Backend tool availability uses each adapter's own executable resolver.
+An unknown or non-Herdr new-work selection emits `BACKEND_INVALID` or a dispatch refusal instead of silently falling back.
+The Herdr delta is `herdr jq treehouse`.
 When `config/crew-dispatch.json` exists, bootstrap also requires `jq` for dispatch profile validation.
-When X mode is opted in, bootstrap also requires `curl` and `jq` before arming the relay poll shim.
 `tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
 On Linux, bootstrap prints a user-local npm command with `"$HOME/.local"` and the matching `PATH` export for npm-installed tools, avoiding root-owned distro prefixes; persist `$HOME/.local/bin` in your shell profile if you need those tools in future sessions.
 An absent or incompatible `tasks-axi` reports the platform-appropriate install command; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
@@ -424,7 +386,7 @@ FM_DATA_OVERRIDE=        # alternate data dir, mainly for tests
 FM_PROJECTS_OVERRIDE=    # alternate projects dir, mainly for tests
 FM_CONFIG_OVERRIDE=      # alternate config dir, mainly for tests
 FM_PROC_ROOT_OVERRIDE=   # alternate /proc root for the Linux process-identity read in fm-wake-lib.sh, mainly for tests
-FM_BACKEND=             # optional runtime backend override for new spawns; tmux/herdr/zellij/orca/cmux support ship/scout spawns, codex-app is not accepted
+FM_BACKEND=             # optional runtime backend override for new work; only herdr is accepted, while retained adapters remain readable for existing records
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_COMPOSER_LINES=20  # herdr-only: tail lines scanned by composer-state guard/fallback paths; idle-baseline submit confirmation uses agent-state
 FM_BACKEND_HERDR_IDLE_RE='^Type a message\.\.\.$'  # herdr-only: empty-composer placeholder regex after shared ghost extraction plus border and prompt stripping

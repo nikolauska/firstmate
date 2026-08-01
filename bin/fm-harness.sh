@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
 # Detect the agent harness this process tree runs on.
 # Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|pi-signed|omp|grok|kimi|unknown
-#        fm-harness.sh crew             print the effective CREWMATE harness
-#                                        (config/crew-harness; "default" resolves to own)
-#        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
-#                                        SECONDMATE agents: config/secondmate-harness ->
-#                                        config/crew-harness -> own. "default" or absent
-#                                        defers to the crew resolution, so an unset
-#                                        secondmate-harness behaves exactly as the crew
-#                                        harness did before this knob existed.
+#        fm-harness.sh crew             print the new-work CREWMATE harness: omp
+#        fm-harness.sh secondmate       print the new-work SECONDMATE harness: omp
 #        fm-harness.sh secondmate-model    print the optional MODEL token from
 #                                        config/secondmate-harness, or empty when absent.
 #        fm-harness.sh secondmate-effort   print the optional EFFORT token from
 #                                        config/secondmate-harness, or empty when absent.
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
-# whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
-# harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
-# Model/effort come ONLY from this file - config/crew-harness stays a bare adapter
-# name and is never parsed for a model.
+# whitespace-separated. A bare "<harness>" preserves the harness-only form.
+# Only the first non-empty, non-comment line is parsed.
+# Model/effort come ONLY from this file - config/crew-harness stays a bare
+# adapter name and is never parsed for a model.
 # Detection layers: verified environment markers first, then process ancestry.
 # Record each newly verified env marker here.
 set -u
@@ -28,6 +22,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$SCRIPT_DIR/fm-omp-process-lib.sh"
+
 
 # Exact-OMP ancestry probe. Innermost wins, exactly like the layer-2 walk
 # below: the moment a nearer ancestor is itself a harness process, this stops
@@ -115,12 +110,26 @@ detect_own() {
   echo unknown
 }
 
-# Resolve the effective crewmate harness: config/crew-harness (a bare adapter
-# name) wins; absent or "default" mirrors firstmate's own harness.
+# Validate the harness value used for a new crewmate or scout dispatch.
+validate_new_work_harness() {
+  local harness=$1 source=${2:-dispatch}
+  if [ "$harness" != omp ]; then
+    echo "error: new $source dispatch requires harness=omp; selected '$harness'. Existing legacy records remain readable but are not reused for new work." >&2
+    return 1
+  fi
+  printf '%s\n' "$harness"
+}
+
+# New crewmate and scout work is always OMP. An explicit legacy value is refused
+# instead of being silently inherited from the primary process.
 resolve_crew() {
   local crew=
   [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-  if [ -z "$crew" ] || [ "$crew" = "default" ]; then detect_own; else echo "$crew"; fi
+  if [ -z "$crew" ] || [ "$crew" = default ]; then
+    printf '%s\n' omp
+  else
+    validate_new_work_harness "$crew" crewmate
+  fi
 }
 
 # Print the first non-empty, non-comment line of config/secondmate-harness
@@ -156,34 +165,38 @@ secondmate_field() {
   esac
 }
 
-# Resolve the harness the PRIMARY uses to launch SECONDMATE agents: a fallback
-# chain config/secondmate-harness -> config/crew-harness -> own. An absent or
-# "default" secondmate-harness token defers to the crew resolution, so an unset
-# secondmate-harness behaves exactly as before this knob existed (a secondmate
-# launched on the crew harness). config/secondmate-harness is the PRIMARY's own
-# setting and is never inherited downstream - secondmates do not spawn secondmates.
+# Resolve the new-work harness the PRIMARY uses to launch SECONDMATE agents.
+# An absent or "default" token resolves through the OMP-only crew path.
 resolve_secondmate() {
   local sm
   sm=$(secondmate_field 1)
-  if [ -z "$sm" ] || [ "$sm" = "default" ]; then resolve_crew; else echo "$sm"; fi
+  if [ -z "$sm" ] || [ "$sm" = default ]; then
+    resolve_crew
+  else
+    validate_new_work_harness "$sm" secondmate
+  fi
 }
 
 # Print the optional model token (2nd field) from config/secondmate-harness, or
 # empty when the harness token is absent/"default" (harness-only file, same as
-# today) or when no model token is present.
+# today) or when no model token is present. A legacy harness token is rejected
+# here too, so callers cannot consume its profile tokens without dispatch
+# validation.
 resolve_secondmate_model() {
   local sm
   sm=$(secondmate_field 1)
   [ -n "$sm" ] && [ "$sm" != "default" ] || return 0
+  validate_new_work_harness "$sm" secondmate >/dev/null || return 1
   secondmate_field 2
 }
 
 # Print the optional effort token (3rd field) from config/secondmate-harness,
-# the same way.
+# with the same OMP-only validation as the model resolver.
 resolve_secondmate_effort() {
   local sm
   sm=$(secondmate_field 1)
   [ -n "$sm" ] && [ "$sm" != "default" ] || return 0
+  validate_new_work_harness "$sm" secondmate >/dev/null || return 1
   secondmate_field 3
 }
 
